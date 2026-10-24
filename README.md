@@ -2,7 +2,7 @@
 
 # ServiceNow MID Server on ARM64 (NVIDIA GX10 / Grace Blackwell)
 
-> **Run a ServiceNow MID Server — including the current Australia release — on an ARM64 machine, even though ServiceNow does not publish a single ARM64 download.**
+> **Run a ServiceNow MID Server (Management, Instrumentation, and Discovery) — including the current Australia release — on an ARM64 machine, even though ServiceNow does not publish a single ARM64 download.**
 
 ![MID Up and Validated](https://github.com/user-attachments/assets/df6bbc88-c6fe-48de-9ea3-2570e9a77e08)
 
@@ -43,9 +43,10 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 - [The Incompatible Versions We Worked Around](#the-incompatible-versions-we-worked-around)
 - [How The Solution Works (The Clever Bit)](#how-the-solution-works-the-clever-bit)
 - [Step-by-Step Guide (Manual Method)](#step-by-step-guide-manual-method)
-- [Verify It Worked](#verify-it-worked)
+- [Verify It Worked (incl. when to check ServiceNow)](#verify-it-worked)
 - [Troubleshooting — Every Error We Hit](#troubleshooting--every-error-we-hit)
 - [Operations — Restart, Logs, Teardown](#operations--restart-logs-teardown)
+- [Contributing & License](#contributing--license)
 
 ---
 
@@ -70,9 +71,13 @@ export MID_NAME="gx10-mid"                       # <-- a name you choose for thi
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eltonaguiar/ServiceNowMidServer/main/setup-mid-arm64.sh -o setup-mid-arm64.sh
+# Optional but recommended: review the script before running it
+cat setup-mid-arm64.sh
 chmod +x setup-mid-arm64.sh
 ./setup-mid-arm64.sh
 ```
+
+> 🔒 **Security note:** this downloads from the `main` branch, which can change. For a pinned, immutable copy, download a specific commit by replacing `main` with a full commit SHA in the URL (find SHAs under the repo's *Commits* page), then verify the file contents with `cat` before running. Never commit your real password anywhere — the `export` lines above live only in your terminal session.
 
 ### Step 3 — Watch it start
 
@@ -173,14 +178,9 @@ This is the heart of the problem: **five separate version/architecture mismatche
 
 **ELI5 for the whole table:** the MID is like a box of parts. The *instructions* (Java code) are universal, but three of the *parts* were made for a different machine (Intel), one part is an old version (Java 11), and the new machine has stricter safety rules (Java 17). We kept the universal instructions, swapped the incompatible parts, and followed the new rules.
 
-> **SECTION SUMMARY — the 5 mismatches:**
-> 1. **Chip type** → skip the installer, use Java files
-> 2. **Release name** → swap Zurich files for Australia files
-> 3. **Java 11 vs 17** → install ARM Java 17
-> 4. **Intel-only starter** → start with `java` directly
-> 5. **Java 17 safety rules** → add 2 launch flags
+> **SECTION SUMMARY — the 5 mismatches in one line each:** 1. **Chip type** → skip the installer, use Java files · 2. **Release name** → swap Zurich files for Australia files · 3. **Java 11 vs 17** → install ARM Java 17 · 4. **Intel-only starter** → start with `java` directly · 5. **Java 17 safety rules** → add 2 launch flags.
 >
-> Plus two non-version traps: **passwords with `&` must be XML-encoded** in `config.xml`, and the MID runs as **uid 999 (not 1000)** — get the ownership wrong and it can't write its own logs.
+> Plus two non-version traps: **passwords with `&` must be XML-encoded** in `config.xml` (and sed-escaped when inserting), and the MID runs as **uid 999 (not 1000)** — get the ownership wrong and it can't write its own logs.
 
 ---
 
@@ -214,15 +214,16 @@ So the recipe is:
 
 ### Prerequisites
 
-- ARM64 (`aarch64`) Linux with Docker installed
+- ARM64 (`aarch64` — check with `uname -m`) Linux with Docker installed
 - `sudo` access
+- The following command-line tools: `unzip`, `wget`, `rsync` (all standard on Ubuntu; install missing ones with `apt install unzip wget rsync`)
 - A ServiceNow **MID server user** with the `mid_server` role
 - Outbound HTTPS to your instance **and** to `install.service-now.com`
 
 Confirm your machine is ARM:
 
 ```bash
-dpkg --print-architecture    # must print: arm64
+uname -m            # must print: aarch64  (Debian/Ubuntu also: dpkg --print-architecture → arm64)
 ```
 
 ### Step 1 — Pull the base image and create volumes
@@ -288,11 +289,18 @@ Stop any running container first. We keep your existing `config.xml` (it holds y
 
 ```bash
 docker rm -f sn-mid 2>/dev/null
-V=/var/lib/docker/volumes/mid_data/_data
 
-sudo cp "$V/config.xml" /tmp/config_backup.xml
+# Resolve the volume path dynamically (works on any Docker data-root / rootless setups)
+V=$(docker volume inspect mid_data --format '{{.Mountpoint}}')
+
+# Backup existing config only if this is NOT a fresh install
+if [ -f "$V/config.xml" ]; then
+  sudo cp "$V/config.xml" /tmp/config_backup.xml
+fi
 sudo rsync -a --exclude 'config.xml' --exclude 'logs/' /tmp/mid_au/agent/ "$V/"
-sudo cp /tmp/config_backup.xml "$V/config.xml"
+if [ -f /tmp/config_backup.xml ]; then
+  sudo cp /tmp/config_backup.xml "$V/config.xml"
+fi
 sudo chown -R 999:999 "$V"
 ```
 
@@ -309,11 +317,10 @@ docker run --rm --platform linux/arm64 --user root \
   -e USER_NAME="mid.server" \
   -e PASSWORD='***PASSWORDHERE***' \
   -e MIDNAME="gx10-mid" \
-  --entrypoint /bin/bash moers/mid-server:latest \
-  -c 'cd /opt/agent; ENC_PW=$(printf %s "$PASSWORD" | sed "s/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/\"/\&quot;/g"); cp /opt/config.xml /opt/agent/config.xml; sed -i "s|https://YOUR_INSTANCE.service-now.com|https://${SN_HOST_NAME}|g" config.xml; sed -i "s|YOUR_INSTANCE_USER_NAME_HERE|${USER_NAME}|g" config.xml; sed -i "s|YOUR_INSTANCE_PASSWORD_HERE|${ENC_PW}|g" config.xml; sed -i "s|YOUR_MIDSERVER_NAME_GOES_HERE|${MIDNAME}|g" config.xml; chown 999:999 config.xml'
+  --entrypoint /bin/bash moers/mid-server:latest \    -c 'cd /opt/agent; ENC_PW=$(printf %s "$PASSWORD" | sed "s/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/\"/\&quot;/g"); SED_PW=$(printf %s "$ENC_PW" | sed "s/[\\\\&|]/\\\\&/g"); cp /opt/config.xml /opt/agent/config.xml; sed -i "s|https://YOUR_INSTANCE.service-now.com|https://${SN_HOST_NAME}|g" config.xml; sed -i "s|YOUR_INSTANCE_USER_NAME_HERE|${USER_NAME}|g" config.xml; sed -i "s|YOUR_INSTANCE_PASSWORD_HERE|${SED_PW}|g" config.xml; sed -i "s|YOUR_MIDSERVER_NAME_GOES_HERE|${MIDNAME}|g" config.xml; chown 999:999 config.xml'
 ```
 
-> **Why the weird `sed` on the password?** It converts special characters into safe XML (`&` → `&amp;`). Skip this and a password like `a&b` produces invalid XML → you get a confusing `401` even though the password is correct.
+> **Why the double `sed` on the password?** The first converts special characters into safe XML (`&` → `&amp;`). The second (`SED_PW`) escapes `&`, `|`, `\` *for sed's replacement syntax itself* — without it, sed treats `&` as "the matched text" and corrupts the value (password `A&B` would land in config.xml as `AYOUR_INSTANCE_PASSWORD_HEREamp;B`). Skip both and a password like `a&b` produces invalid XML → you get a confusing `401` even though the password is correct.
 >
 > **Do NOT add a `mid.pinned.version` parameter.** Pinning forces MID back to an older release and restarts the failed-upgrade loop.
 
@@ -328,7 +335,7 @@ docker run -d --name sn-mid \
   --platform linux/arm64 --restart unless-stopped --user root \
   -v mid_data:/opt/agent -v mid_jdk17:/opt/jdk17 \
   --entrypoint /bin/bash moers/mid-server:latest \
-  -c "cd /opt/agent; rm -f /opt/agent/work/mid.pid; OPENS='--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED --add-opens=java.base/javax.crypto=ALL-UNNAMED --add-opens=java.base/sun.security.util=ALL-UNNAMED --add-opens=java.base/java.math=ALL-UNNAMED'; su mid -s /bin/bash -c 'cd /opt/agent && nohup /opt/jdk17/bin/java -Xmx1024m -Djava.security.manager=allow '\$OPENS' -classpath lib/*:extlib/* com.service_now.mid.Main start >/opt/agent/logs/console.log 2>&1 &'; exec tail -F /opt/agent/logs/agent0.log.0 /opt/agent/logs/console.log"
+  -c "cd /opt/agent; rm -f /opt/agent/work/mid.pid; OPENS='--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED --add-opens=java.base/javax.crypto=ALL-UNNAMED --add-opens=java.base/sun.security.util=ALL-UNNAMED --add-opens=java.base/java.math=ALL-UNNAMED'; su mid -s /bin/bash -c \"cd /opt/agent && nohup /opt/jdk17/bin/java -Xmx1024m -Djava.security.manager=allow \$OPENS -classpath 'lib/*:extlib/*' com.service_now.mid.Main start >/opt/agent/logs/console.log 2>&1 &\"; exec tail -F /opt/agent/logs/agent0.log.0 /opt/agent/logs/console.log"
 ```
 
 **Why each flag matters (ELI5 in brackets):**
@@ -337,6 +344,8 @@ docker run -d --name sn-mid \
 |------|--------|
 | `-Djava.security.manager=allow` | Australia's code calls `System.setSecurityManager`. Java 17 blocks it by default → without this the JVM aborts. *(ELI5: the new house has a stricter alarm system — we need to tell it "yes, this is allowed".)* |
 | `--add-opens=java.base/java.nio=ALL-UNNAMED` (+13 more) | MID's Apache Ignite looks inside Java's internals. Java 17's module system locks those rooms → `InaccessibleObjectException` without these. *(ELI5: give the program keys to the locked cabinets it needs.)* |
+
+> ⚠️ **Java-version ceiling:** `-Djava.security.manager=allow` works on **JDK 17 and 21**, but Java has deprecated the Security Manager for removal — on newer JDKs (24+) this flag no longer enables it. Stick to JDK 17/21 for MID until ServiceNow ships a release designed for post-removal JDKs. If a future MID release drops the `setSecurityManager` call, the flag becomes a harmless no-op.
 | `-classpath "lib/*:extlib/*"` | Loads all MID files. |
 | `com.service_now.mid.Main start` | The real MID entrypoint (normally called *by* the wrapper — we call it ourselves). |
 | `nohup … &` + `tail -F` | `Main start` forks a child and the parent exits. Without backgrounding + tailing, Docker thinks the container finished and restart-loops it. *(ELI5: keep a babysitter in the room so the container knows the job isn't done.)* |
@@ -346,6 +355,27 @@ docker run -d --name sn-mid \
 ---
 
 ## Verify It Worked
+
+### ✅ When to check ServiceNow (and what you'll see)
+
+**Where:** In ServiceNow go to **MID Server → MID Servers** (the `ecc_agent` list) and find your `MID_NAME`.
+
+**When to check:**
+
+| When | What to expect | If it's not there yet |
+|------|----------------|------------------------|
+| **Right after starting** (first ~60s) | The MID authenticates, then the record appears/updates. Watch `docker logs -f sn-mid` — the handshake prints `Successfully connected to instance` when ready. | Wait. On a **fresh** setup the record doesn't exist until first successful registration. |
+| **~1–2 min after launch** | **Status: Up** — this is the moment it's actually working. | Status `Starting`/`Down` → give it another minute, then check `docker logs --tail 50 sn-mid`. |
+| **After clicking Validate** | **Validated: Yes** confirms the instance-side handshake (this is the state in the screenshot at the top of this README). | `Validating` forever → check for a stale **MID Server Issue** row (see Troubleshooting). |
+| **Any time later** | Status stays `Up`, **Version** shows your release (`australia-…`), **Last refreshed** ticks with each heartbeat. | Status flipped to `Down` → container likely exited: `docker ps` + `docker logs --tail 50 sn-mid`. |
+
+**Where the other places to look:**
+
+- **MID Server → MID Server Issues** — one-off errors (e.g. the stale *"Aborting MID Server upgrade"* row from a pre-fix attempt; safe to close/delete once Status is Up)
+- **`ecc_agent` record itself** — fields: `status`, `version`, `last refreshed`, `validated`
+- **Instance stats** — browse to `https://YOUR_INSTANCE/stats.do` to see the expected `MID buildstamp` your instance wants
+
+> **SECTION SUMMARY:** check **MID Server → MID Servers** about **2 minutes after launch**. You want three green signals: **Status: Up**, **Validated: Yes**, **Version: australia-…**. Before that, use `docker logs -f sn-mid` — the log tells you the moment the handshake completes.
 
 ```bash
 # Container up and Java alive
@@ -479,6 +509,18 @@ docker volume rm mid_data mid_jdk17
 | MID release | Instance is Australia (29) | Manually overlaid **Australia** files |
 | JVM flags | Defaults | `--add-opens` (×14) + `-Djava.security.manager=allow` |
 | **Result** | **Won't install on ARM64** | **Native ARM64 MID, Australia build, Up & Validated** ✅ |
+
+---
+
+## Contributing & License
+
+Found a fix for a new release, another ARM64 platform quirk, or a script improvement? Open an **issue** or **PR** — especially welcome:
+
+- Verified steps for releases after Australia (update `MID_BUILD`/`MID_DATE` and confirm the release-check logic)
+- Experience on other ARM64 hardware (Graviton, Raspberry Pi 5, Apple Silicon VMs)
+- Docker Compose / rootless-Docker variants of the launch command
+
+**License:** MIT — see [LICENSE](LICENSE). Use at your own risk; this is a community workaround for an unsupported configuration (ServiceNow does not officially support ARM64 MID Servers).
 
 ---
 
