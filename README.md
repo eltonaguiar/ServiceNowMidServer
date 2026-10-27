@@ -46,6 +46,7 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 - [Verify It Worked (incl. when to check ServiceNow)](#verify-it-worked)
 - [Troubleshooting — Every Error We Hit](#troubleshooting--every-error-we-hit)
 - [Operations — Restart, Logs, Teardown](#operations--restart-logs-teardown)
+- [Running Discovery (use your MID)](DISCOVERY.md)
 - [Appendix — Real-World Bring-Up Notes (2026-10-27)](APPENDIX.md)
 - [Contributing & License](#contributing--license)
 
