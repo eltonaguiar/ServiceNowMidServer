@@ -46,7 +46,8 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 - [Verify It Worked (incl. when to check ServiceNow)](#verify-it-worked)
 - [Troubleshooting — Every Error We Hit](#troubleshooting--every-error-we-hit)
 - [Operations — Restart, Logs, Teardown](#operations--restart-logs-teardown)
-- [Running Discovery (use your MID)](DISCOVERY.md)
+- [Running Discovery (use your MID)](DISCOVERY.md) — includes **how to check whether the
+  Discovery plugin is even installed** (`./check-discovery.sh`) and how to activate it on a PDI
 - [Appendix — Real-World Bring-Up Notes (2026-10-27)](APPENDIX.md)
 - [Contributing & License](#contributing--license)
 

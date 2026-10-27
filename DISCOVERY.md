@@ -11,32 +11,73 @@ Your MID only needs to be **Up + Validated + capable** and able to **reach the t
 
 ---
 
-## ⚠️ First: is Discovery even installed on your instance?
+## ⚠️ First: activate the Discovery plugin
 
 Network **Discovery** is the **ITOM Discovery** product (plugin `com.snc.discovery`).
-**Personal Developer Instances (PDIs, e.g. `dev296154`) typically do NOT include it.**
+It may or may not be **installed** on your instance — that is a separate question from
+entitlement.
 
-- If searching the nav for **discovery** returns only **System Security → Data Discovery (Classic) →
-  All Data Patterns**, that is a **different product** — the *data-anonymization / data-pattern* tool
-  (privacy/GDPR). It is **NOT** network Discovery and cannot scan devices.
-- If there is **no "Discovery" module** (no *Discovery → Discovery Schedules*, no *Quick Discovery*)
-  in the application navigator, the plugin is not installed → the MID has **nothing to do** for
-  Discovery regardless of how healthy it is.
-- To actually run network Discovery you need an instance where **ITOM Discovery is entitled** (a full
-  dev/prod instance), or activate the plugin at *System Definition → Plugins* if your instance allows
-  it (PDIs generally don't).
-- Everything below applies **once Discovery is available/entitled**.
+**Good news: PDIs *are* allowed to install it.** The "Pricing: Paid" label you see in the
+plugin record is irrelevant on a PDI — PDIs are isolated personal dev sandboxes, so
+installing a paid plugin there is free and does not create a compliance/licensing
+obligation. Rule of thumb: *if the plugin offers an Install button, you may install it*
+(the exceptions are capabilities PDIs genuinely can't run, e.g. some GenAI features).
 
-> How to confirm quickly: navigate to `https://<instance>.service-now.com/discovery_schedule_list.do`
-> or `/discovery_status_list.do`. If it 404s / shows nothing, Discovery isn't installed.
+### Activate it (needs an `admin` login)
+
+Two equivalent routes:
+
+1. **Direct plugin page** (fastest) — open
+   `https://<instance>.service-now.com/now/app-manager/home/plugin/id/com.snc.discovery/details`
+   and click **Install**.
+2. **Classic** — *All → System Definition → Plugins* → filter for **Discovery** /
+   `com.snc.discovery` → click the plugin name → **Activate**.
+
+Activation is not instant (often 10–40 min on a PDI). If it fails with a *store entitlement*
+or *activation failed* error, just retry — that is a known PDI flake, not a "you're not
+allowed" message.
+
+### Verify it actually installed
+
+- The application navigator gains **Discovery** (*Discovery Schedules*, *Discovery Status*,
+  *Quick Discovery*) and **Discovery Definition**.
+- `https://<instance>.service-now.com/discovery_schedule_list.do` loads a list instead of
+  redirecting / 404ing.
+- Unauthenticated probes are useless here (everything redirects to `session_timeout.do`), so
+  use a REST check with any authenticated user instead — a **missing** table returns HTTP 400
+  `"Invalid table discovery_schedule"`, whereas an **existing** table returns 200 or a 403 ACL
+  error:
+
+  ```bash
+  curl -s -u "<user>:<pass>" -H 'Accept: application/json' \
+    "https://<instance>.service-now.com/api/now/table/discovery_schedule?sysparm_limit=1" \
+    -w '\n[http %{http_code}]\n'
+  ```
+
+  Verified on `dev296154` (2026-10-27): `discovery_schedule`, `discovery_scan`,
+  `discovery_range_set`, `discovery_ip_address` → **400 Invalid table** ⇒ Discovery is
+  **not installed yet**, even though base-adjacent tables (`discovery_credentials`,
+  `discovery_range`, `discovery_range_item`, `discovery_status`, `discovery_classy`,
+  `discovery_device_history`) already exist. Don't be fooled by those — they ship with the
+  base platform / ITOM base, not the Discovery app.
+
+> **Different product, do not confuse:** *System Security → Data Discovery (Classic) → All Data
+> Patterns* is the **data-anonymization / data-pattern** tool (privacy/GDPR). It is **not**
+> network Discovery and cannot scan devices.
+>
+> Until the plugin is installed the MID is perfectly healthy but has **nothing to do** for
+> Discovery — it can still be used for integrations, credentials, and scheduled jobs.
+
+Everything below applies **once the plugin is installed**.
 
 ---
 
 ## 0. Prerequisites
 
-1. **Discovery plugin active** — *System Definition → Plugins* → search **Discovery** (`com.snc.discovery`).
-   ⚠️ Personal/dev instances (e.g. `dev####`) may **not** expose Discovery or may be limited; a full
-   dev/prod instance is best for real scans.
+1. **Discovery plugin installed + active** — *System Definition → Plugins* → **Discovery**
+   (`com.snc.discovery`). On a PDI this is a free install (see the section above). If the
+   plugin isn't there yet, nothing below will work — there is no Discovery menu, no
+   schedules, and the MID has no Discovery work to poll for.
 2. **MID Up + Validated + capable** — *MID Server → Servers* → your MID (e.g. `gx10-mid`). Confirm:
    - **Status: Up**, **Validated: Yes**
    - **Capabilities** includes `All` or `Discovery`
@@ -99,11 +140,14 @@ Monitor: **Discovery Status** / **Discovery Logs** on the schedule. Results land
 | **No credential** / auth failures on targets | Missing/wrong **Discovery Credential** (not the MID user). Add at *Discovery → Credentials* and test. |
 | **Could not connect / timeout** to a target | MID can't reach the IP (firewall/route). Test from the MID container: `docker exec sn-mid_mid1 sh -c 'nc -vz <ip> 22'`. If the target is on the host's LAN and NAT blocks it, re-run the container with `--network host`. |
 | **"Could not decrypt file discovery whitelist"** / **"Unable to load key store"** | Keystore mismatch — see `APPENDIX.md` troubleshooting; run `setup-mid-fast.sh` (it clears a stale keystore). |
-| Personal/dev instance: **no Discovery menu** | Discovery is a separate plugin/license; personal instances may not include it. Use a full dev instance. |
+| Personal/dev instance: **no Discovery menu** | The plugin isn't installed yet — it is *not* a licensing block. Install `com.snc.discovery` as an admin (see the section at the top); retry on store errors. |
 
 ---
 
 ## Quick reference — do I even need Discovery?
-- **Now**, the MID just needs to be **Up + Validated** to receive work (including Discovery once licensed).
+- **Now**, the MID just needs to be **Up + Validated** to receive work. Discovery work only exists
+  after the `com.snc.discovery` plugin is installed.
 - Discovery requires the plugin + target credentials + a schedule/Quick Discovery. The MID itself is
   the *agent* that performs the scan and reports back to the instance.
+- Order of operations: **install plugin → MID Up/Validated → target credentials → Quick Discovery
+  (one IP) → schedule (range)**.
