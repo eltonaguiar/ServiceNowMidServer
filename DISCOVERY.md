@@ -11,6 +11,27 @@ Your MID only needs to be **Up + Validated + capable** and able to **reach the t
 
 ---
 
+## ⚠️ First: is Discovery even installed on your instance?
+
+Network **Discovery** is the **ITOM Discovery** product (plugin `com.snc.discovery`).
+**Personal Developer Instances (PDIs, e.g. `dev296154`) typically do NOT include it.**
+
+- If searching the nav for **discovery** returns only **System Security → Data Discovery (Classic) →
+  All Data Patterns**, that is a **different product** — the *data-anonymization / data-pattern* tool
+  (privacy/GDPR). It is **NOT** network Discovery and cannot scan devices.
+- If there is **no "Discovery" module** (no *Discovery → Discovery Schedules*, no *Quick Discovery*)
+  in the application navigator, the plugin is not installed → the MID has **nothing to do** for
+  Discovery regardless of how healthy it is.
+- To actually run network Discovery you need an instance where **ITOM Discovery is entitled** (a full
+  dev/prod instance), or activate the plugin at *System Definition → Plugins* if your instance allows
+  it (PDIs generally don't).
+- Everything below applies **once Discovery is available/entitled**.
+
+> How to confirm quickly: navigate to `https://<instance>.service-now.com/discovery_schedule_list.do`
+> or `/discovery_status_list.do`. If it 404s / shows nothing, Discovery isn't installed.
+
+---
+
 ## 0. Prerequisites
 
 1. **Discovery plugin active** — *System Definition → Plugins* → search **Discovery** (`com.snc.discovery`).
