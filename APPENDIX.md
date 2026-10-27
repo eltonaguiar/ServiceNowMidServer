@@ -20,6 +20,22 @@ AutoUpgrade.run(), MID server Operational State=UP
 ```
 …and **0** `UnrecoverableKeyException` after the keystore fix below.
 
+**ServiceNow confirms: `gx10-mid` → Status: Up, Validated: Yes.**
+
+## Fast setup (recommended) — `quickstart.sh` + `setup-mid-fast.sh`
+Two helpers make bring-up fast and password-safe:
+- **`quickstart.sh`** — prompts for host / user / password (hidden) / name, then runs the setup. The password never touches disk or shell history.
+- **`setup-mid-fast.sh`** — **sudo-free, idempotent**. On a **fresh instance** it downloads the ~478 MB payload once; on a **re-run / already-installed** machine it detects the agent already in the `mid_data` volume and **skips the download (starts in seconds)**. It also auto-clears a stale keystore after regenerating `config.xml`, which prevents the "Unable to load keystore" trap.
+
+```bash
+./quickstart.sh        # interactive, recommended
+# or non-interactive:
+export SN_HOST=acme.service-now.com MID_USER=mid.server MID_NAME=gx10-mid
+read -rsp "pw: " MID_PASS; export MID_PASS
+./setup-mid-fast.sh
+```
+No host `sudo` required for users in the `docker` group — volume file ops run **inside Docker as root** (`docker run --rm --user root -v mid_data:/…`).
+
 ## What was already installed (no reinstall needed)
 - Docker image `moers/mid-server:latest` present.
 - Volume **`mid_data`**: full agent already present (673 jars in `lib/`, `extlib/`, `config.xml`, …).
