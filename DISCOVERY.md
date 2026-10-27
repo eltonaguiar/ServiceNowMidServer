@@ -92,13 +92,20 @@ they add no Discovery schedules and give the MID no Discovery work.
     -w '\n[http %{http_code}]\n'
   ```
 
-  Verified on `dev296154` (2026-10-27): **Discovery IS installed** after activation —
-  `discovery_schedule` (label *Discovery Schedule*), `discovery_status`, `discovery_range`
-  (label *Discovery Range Set*, 1 default record), `discovery_device_history`, plus the nav
-  modules *Discovery Probes Trackers*, *Discovery Log*, *Traffic Based Discovery* and
-  *Credentials*. Before activation `discovery_schedule` returned `400 Invalid table`.
-  Base-adjacent tables (`discovery_credentials`, `discovery_classy`, `discovery_range`) exist
-  **even without** the plugin, so they are *not* evidence on their own.
+  **Table existence alone is NOT proof.** Measured the hard way on `dev296154` (2026-10-27):
+  `discovery_status` / `discovery_range` are base-platform tables from the instance build
+  (created 2026-06-12), and a **failed** ITOM AIOps/metric activation (`com.snc.sa.metric`)
+  still created ~69 `discovery*` tables that day before rolling over to
+  `Plugin activated/upgraded failed`. Meanwhile `v_plugin` had **no** `com.snc.discovery`
+  record and `com.snc.itom.discovery.license` was **inactive** — i.e. Discovery was *not*
+  actually installed, despite the tables.
+
+  Authoritative check (admin): `v_plugin` record for `com.snc.discovery` must exist and be
+  `active`, and `com.snc.itom.discovery.license` must be active:
+
+  ```
+  https://<instance>.service-now.com/api/now/table/v_plugin?sysparm_query=idLIKEdiscovery&sysparm_fields=id,name,active
+  ```
 
 > **Different product, do not confuse:** *System Security → Data Discovery (Classic) → All Data
 > Patterns* is the **data-anonymization / data-pattern** tool (privacy/GDPR). It is **not**
