@@ -1,200 +1,259 @@
-# Running Discovery with your ARM64 MID Server
+# Installing and Running Discovery
 
-Discovery in ServiceNow is **instance-driven**: the *instance* tells a **validated MID Server**
-to scan target IPs, using **Discovery *credentials*** (which are separate from the MID login).
-Your MID only needs to be **Up + Validated + capable** and able to **reach the targets**.
+Everything about getting **ITOM Discovery** working on a ServiceNow instance and driving it with
+the ARM64 MID Server from this repo: install the plugin → verify it → connect a MID → scan hosts.
 
-> Two different things, don't mix them:
-> - **MID user** (`mid.server`, `mid.server2`) — authenticates the **MID → instance**. Set during setup.
-> - **Discovery credentials** — how the **MID logs into your target machines** (SSH / WMI / SNMP).
+Discovery is **instance-driven**: the *instance* instructs a **validated MID Server** to scan
+target IPs, authenticating with **Discovery credentials** (separate from the MID login). The MID
+only needs to be **Up + Validated + capable** and able to **reach the targets**.
+
+> **Do not mix these up**
+> - **MID user** (`mid.server`) — authenticates the **MID → instance**. Set during setup.
+> - **Discovery credentials** — how the **MID logs into targets** (SSH / WMI / SNMP).
 >   Configured under *Discovery → Credentials*.
+
+**Order of operations** (each step blocks the next):
+
+1. Install the `com.snc.discovery` plugin → 2. MID **Up + Validated** → 3. target **credentials**
+→ 4. **Quick Discovery** on one host → 5. **Discovery Schedule** for ranges.
 
 ---
 
-## ⚠️ First: activate the Discovery plugin
+## 1. Before you install
 
-Network **Discovery** is the **ITOM Discovery** product (plugin `com.snc.discovery`).
-It may or may not be **installed** on your instance — that is a separate question from
-entitlement.
+| Requirement | Why |
+|---|---|
+| `admin` on the instance | Plugin activation needs an admin login. |
+| A PDI or dev instance | PDIs **may** install paid plugins free of charge — the "Pricing: Paid" label is irrelevant there (PDIs are isolated sandboxes). Rule of thumb: *if it offers an Install button, you may install it.* |
+| ~30–90 min of patience | PDI plugin activations are slow and occasionally fail-then-retry. |
+| MID already running | Not required for the install itself, but you'll want it for step 6+. See `README.md` / `quickstart.sh`. |
 
-**Good news: PDIs *are* allowed to install it.** The "Pricing: Paid" label you see in the
-plugin record is irrelevant on a PDI — PDIs are isolated personal dev sandboxes, so
-installing a paid plugin there is free and does not create a compliance/licensing
-obligation. Rule of thumb: *if the plugin offers an Install button, you may install it*
-(the exceptions are capabilities PDIs genuinely can't run, e.g. some GenAI features).
+---
 
-### Activate it (needs an `admin` login)
+## 2. Install the plugin
 
-Two equivalent routes:
+Two equivalent routes — both need `admin`:
 
-1. **Classic plugin list** (most reliable, works on every release) — open
+1. **PDI console** (developer.servicenow.com → *Manage my instance*) → plugin/store list →
+   filter `discovery` → **Discovery** card → **Activate plugin**.
+2. **From the instance** —
    `https://<instance>.service-now.com/sys_plugins_list.do?sysparm_query=nameLIKEDiscovery`
-   and click the **Discovery** record. The form header shows **Status: Active/Inactive**; an
-   inactive plugin shows an **Activate** link.
-2. **Plugin/store card** — *All → System Definition → Plugins* (or the "Plugins for your
-   instance" card page), filter for `discovery`, click the **Discovery** card → **Activate plugin**.
+   → open the **Discovery** record → header shows **Status**; an inactive record has an
+   **Activate** link.
+
+### Which card / plugin id
+
+| Card | Verdict |
+|---|---|
+| **Discovery** (`com.snc.discovery`) | ✅ **This one.** Creates Discovery Schedules/Status, probes, MID jobs. |
+| **File Based Discovery** | Optional. Discovers *installed software products* via file signatures. Not needed to scan hosts. |
+| *ITOM Metric Management*, *Operational Intelligence*, *Health Log Analytics*, *Event Management* | ❌ Not needed. These are the ITOM **AIOps** suite (metrics/events). They create **no** Discovery schedules and give the MID no Discovery work. |
+
+**Demo data:** choose **without demo data** if offered. It keeps the CMDB clean — otherwise you
+get phantom CIs and pre-built schedules that muddy your first test.
 
 > ⚠️ `https://<instance>.service-now.com/now/app-manager/home/plugin/id/com.snc.discovery/details`
 > returns **"Plugin details not found"** on some releases (verified on Australia `dev296154`).
-> That is **not** an error with your instance or a failed activation — `com.snc.discovery` is a
-> legacy unscoped plugin, so it does not always appear in the store app-manager. Use route 1.
+> That is **not** an instance problem — `com.snc.discovery` is a legacy unscoped plugin and does
+> not always appear in the store app-manager. Use route 2 above.
 
-Activation is not instant (often 10–40 min on a PDI). If it fails with a *store entitlement*
-or *activation failed* error, just retry — that is a known PDI flake, not a "you're not
-allowed" message.
+---
 
-**Which plugin card to click.** Filtering the plugin/store list for `Discovery` on a PDI
-`dev####` instance typically shows two cards:
+## 3. Monitor the install (three sources, three different meanings)
 
-| Card | Do this |
-|---|---|
-| **Discovery** | ✅ **This is the one.** Click **Activate plugin**. Drives Discovery schedules, probes, MID jobs. |
-| **File Based Discovery** | Optional add-on — discovers *installed software products* via file signatures on Windows/Unix. Not needed to scan hosts; add later if you want software inventory. |
+This is where people get lost. The console, the worker row, and the plugin log each answer a
+different question.
 
-**Not** the right plugin: *ITOM Metric Management*, *Operational Intelligence*, *Health Log
-Analytics*, *Event Management* (the ITOM AIOps suite). Those are metrics/events/monitoring —
-they add no Discovery schedules and give the MID no Discovery work.
+| Source | What it actually tells you | Gotcha |
+|---|---|---|
+| **"Activating Plugin…"** badge on developer.servicenow.com | That a store-side request exists / the last known state | **Stale by minutes.** Keeps showing "Activating…" after the job has finished — including after a *successful* run. Not live telemetry. |
+| `sys_progress_worker` (`PluginManagerWorker`) | Live progress: `Loaded 703 of 1,634 files` | The row is **deleted when the job ends**. Empty list = *finished*, not *running*. It also does not say **which** plugin is being installed. |
+| `sys_plugin_log` | The durable record: which plugin, every file loaded, and the outcome | Only written once the instance actually starts pulling the payload. Empty = still **queued**. |
 
-### Verify it actually installed
+### Poll it
 
-- The application navigator gains **Discovery** (*Discovery Schedules*, *Discovery Status*,
-  *Quick Discovery*) and **Discovery Definition**.
-- **Activation is progressive — the menus lag the tables.** ServiceNow creates the ~130
-  Discovery tables first and adds the navigation modules near the end. Measured on
-  `dev296154`: 30 min in, 114 `discovery*` tables existed but only *Credentials* /
-  *Discovery Probes Trackers* modules were present, and **no** *Discovery Schedules* module.
-  Check whether the install is still running (admin, browser or REST):
+Instance-side, as admin:
 
-  ```
-  https://<instance>.service-now.com/api/now/table/sys_progress_worker?sysparm_query=name=PluginManagerWorker&sysparm_fields=name,state,sys_updated_on
-  ```
+- `https://<instance>.service-now.com/sys_progress_worker_list.do?sysparm_query=state%3Drunning`
+- `https://<instance>.service-now.com/sys_plugin_log_list.do` (newest first, filter
+  `plugin = com.snc.discovery`)
 
-  `"state":"running"` ⇒ wait. `"state":"complete"` ⇒ reload the nav (hard refresh) and the
-  Discovery menu will be there.
-- **No-terminal check (admin, browser session auth)** — paste this into the browser while logged
-  in as `admin`; it returns JSON with the plugin state:
+Or with the helper in this repo (read-only, sudo-free):
 
-  ```
-  https://<instance>.service-now.com/api/now/table/sys_plugins?sysparm_query=idLIKEcom.snc.discovery&sysparm_fields=id,name,active
-  ```
+```bash
+SN_HOST=dev296154.service-now.com SN_USER=admin ./watch-plugin-install.sh com.snc.discovery
+```
 
-  `"active":"true"` ⇒ activated. `"active":"false"` ⇒ still inactive, go click Activate.
-- `https://<instance>.service-now.com/discovery_schedule_list.do` loads a list instead of
-  redirecting / 404ing.
-- Unauthenticated probes are useless here (everything redirects to `session_timeout.do`), so
-  use a REST check with any authenticated user instead — a **missing** table returns HTTP 400
-  `"Invalid table discovery_schedule"`, whereas an **existing** table returns 200 or a 403 ACL
-  error:
+It prints worker progress plus the newest plugin-log line every 20 s and exits when the log says
+`Plugin activated/upgraded successfuly` or `... failed`. `--interval N` / `--timeout N` adjust
+pacing; `SN_PASS` can be supplied via env or it will prompt.
 
-  ```bash
-  curl -s -u "<user>:<pass>" -H 'Accept: application/json' \
-    "https://<instance>.service-now.com/api/now/table/discovery_schedule?sysparm_limit=1" \
-    -w '\n[http %{http_code}]\n'
-  ```
+### How to read it
 
-  **Table existence alone is NOT proof.** Measured the hard way on `dev296154` (2026-10-27):
-  `discovery_status` / `discovery_range` are base-platform tables from the instance build
-  (created 2026-06-12), and a **failed** ITOM AIOps/metric activation (`com.snc.sa.metric`)
-  still created ~69 `discovery*` tables that day before rolling over to
-  `Plugin activated/upgraded failed`. Meanwhile `v_plugin` had **no** `com.snc.discovery`
-  record and `com.snc.itom.discovery.license` was **inactive** — i.e. Discovery was *not*
-  actually installed, despite the tables.
+- **No worker row + no log line for your plugin** → the request is still queued store-side. Wait.
+- **Worker row with `Loaded N of M files`** → running. Leave it alone; do **not** click Activate again.
+- **`Plugin activated/upgraded successfuly`** in `sys_plugin_log` → done.
+- **`Plugin activated/upgraded failed`** → see §5.
 
-  Authoritative check (admin): `v_plugin` record for `com.snc.discovery` must exist and be
-  `active`, and `com.snc.itom.discovery.license` must be active:
+---
 
-  ```
-  https://<instance>.service-now.com/api/now/table/v_plugin?sysparm_query=idLIKEdiscovery&sysparm_fields=id,name,active
-  ```
+## 4. Verify it worked
+
+Authoritative order (stop at the first one that fails):
+
+**a. The plugin record is active.** `v_plugin` is readable by admin over REST (unlike
+`sys_plugins`, which needs the `maint` role and returns `403 Failed API level ACL Validation`):
+
+```
+https://<instance>.service-now.com/api/now/table/v_plugin?sysparm_query=idLIKEdiscovery&sysparm_fields=id,name,active,version
+```
+
+`com.snc.discovery` must be present and active. Also check `com.snc.itom.discovery.license` — it
+must be **active** too.
+
+**b. The install ended cleanly.** Newest `sys_plugin_log` line for `com.snc.discovery` reads
+`Plugin activated/upgraded successfuly`.
+
+**c. The menus exist.** Hard-refresh (`Ctrl+Shift+R`) and look for
+**Discovery → Discovery Schedules / Discovery Status / Quick Discovery** and
+**Discovery Definition**. Before a successful install you'll only see stray modules
+(*Credentials*, *Discovery Probes Trackers*, *Traffic Based Discovery*).
+
+**d. The pages open.** `https://<instance>.service-now.com/discovery_schedule_list.do` loads a list.
+
+> ### ⚠️ Table existence is NOT proof of installation
+> Measured the hard way on `dev296154` (2026-10-27):
+> - `discovery_status` and `discovery_range` are **base-platform** tables shipped with the
+>   instance build (created `2026-06-12`) — they exist with no plugin at all.
+> - A **failed** `com.snc.sa.metric` (ITOM AIOps) activation still created **~69 `discovery*`
+>   tables** before ending in `Plugin activated/upgraded failed`.
+> - During that window `discovery_schedule` flipped from `400 Invalid table` to `403`, which
+>   looks exactly like a successful install.
+>
+> Only `v_plugin` + a `successfuly` log line are conclusive.
 
 > **Different product, do not confuse:** *System Security → Data Discovery (Classic) → All Data
 > Patterns* is the **data-anonymization / data-pattern** tool (privacy/GDPR). It is **not**
 > network Discovery and cannot scan devices.
->
-> Until the plugin is installed the MID is perfectly healthy but has **nothing to do** for
-> Discovery — it can still be used for integrations, credentials, and scheduled jobs.
-
-Everything below applies **once the plugin is installed**.
 
 ---
 
-## 0. Prerequisites
+## 5. If the install fails
 
-1. **Discovery plugin installed + active** — *System Definition → Plugins* → **Discovery**
-   (`com.snc.discovery`). On a PDI this is a free install (see the section above). If the
-   plugin isn't there yet, nothing below will work — there is no Discovery menu, no
-   schedules, and the MID has no Discovery work to poll for.
-2. **MID Up + Validated + capable** — *MID Server → Servers* → your MID (e.g. `gx10-mid`). Confirm:
-   - **Status: Up**, **Validated: Yes**
-   - **Capabilities** includes `All` or `Discovery`
-3. **Discovery credentials** — *Discovery → Credentials* → **New**, matching your target OS:
-   - **Linux**: SSH username + password (or private key) + sudo password
+1. **Read the last log lines** — *Plugin log* filtered to your plugin, or
+   `watch-plugin-install.sh`. Install logs are verbose and name the exact file/step that broke;
+   `Loading update: <app>/if/<other-app>/update/<file>.xml` immediately before a failure is a
+   strong hint at a dependency conflict.
+2. **Expect a free retry.** PDIs frequently fail once on the store handshake and then succeed on
+   the automatic retry. Observed on `dev296154`: `failed` at 23:23:00 → retry auto-started
+   23:26:02 → `successfuly` at 23:27:14 (the retry is much faster because the payload is cached).
+3. **Do not click Activate repeatedly** while a job is queued or running — you stack duplicate
+   requests and make the store status harder to clear.
+4. **Timebox:** if ~15–20 min pass with *no* worker row and *no* new log line, the request was
+   dropped — click **Activate plugin** once more.
+5. **If it keeps failing:** log fully out of developer.servicenow.com and back in (the console
+   caches status per session); retry a **small** plugin first (e.g. *File Based Discovery*) to
+   prove the store pipeline is healthy, then retry Discovery. Last resorts: a support case quoting
+   instance + plugin + exact failure timestamp, or release/restore the PDI (destroys data).
+
+---
+
+## 6. Prerequisites for actually scanning
+
+1. **MID Up + Validated** — *MID Server → Servers* → your MID (e.g. `gx10-mid`):
+   **Status: Up**, **Validated: Yes**, **Capabilities** includes `All` or `Discovery`.
+   The MID picks up new capabilities automatically after the plugin installs — no restart needed.
+2. **Discovery credentials** — *Discovery → Credentials → New*, matching the target OS:
+   - **Linux**: SSH username + password (or private key) + optional sudo password
    - **Windows**: Domain/Workgroup admin (WMI)
    - **Network devices**: SNMP community
-   These are encrypted in the instance and used by the MID to log into targets.
-4. **Network reachability** — the MID must reach target IPs **outbound**: SSH 22, WMI 135/445/5985,
-   SNMP 161, ICMP. Our MID runs in Docker on the GX10; Docker bridge/NAT gives outbound LAN access.
-   If targets aren't reachable, run the container with `--network host` (see Troubleshooting).
+
+   These are separate from the MID user. A wrong or missing credential is the #1 cause of
+   "no results".
+3. **Network reachability** — the MID must reach targets **outbound**: SSH 22, WMI 135/445/5985,
+   SNMP 161, ICMP. In this repo the MID runs in Docker; bridge/NAT gives outbound LAN access.
+   Check from inside the container before blaming ServiceNow:
+
+   ```bash
+   docker exec sn-mid sh -c 'timeout 4 bash -c "echo > /dev/tcp/192.168.2.52/22" && echo REACHABLE'
+   ```
+
+   If inbound access is needed, re-run the container with `--network host`.
 
 ---
 
-## 1. Fastest test — Quick Discovery (one IP / small range)
+## 7. Fastest test — Quick Discovery (one host)
 
-*Discovery → Quick Discovery* (a.k.a. *Quick Discover*):
-- **Discover**: `192.168.1.10` (single) or `192.168.1.1-254` (range) or a subnet
-- **MID Server**: choose `gx10-mid` (or the *All* cluster)
-- **Credentials**: pick the SSH/WMI/SNMP credential for those targets
-- Click **Discover**
+*Discovery → Quick Discovery*:
 
-Watch *Discovery → Discovery Logs / Status* (In Progress → Complete). Great for proving the MID
-can reach and authenticate to a target before you build schedules.
+- **Discover**: `192.168.2.52` (single host — start here, not with a /24)
+- **MID Server**: `gx10-mid` (or the *All* cluster)
+- **Credentials**: the SSH/WMI/SNMP credential for that target
+- **Discover**
+
+Watch *Discovery → Discovery Status / Discovery Logs* (In Progress → Complete). This proves the
+MID can reach and authenticate to a target before you build schedules.
 
 ---
 
-## 2. Repeatable — Discovery Schedule
+## 8. Repeatable — Discovery Schedule
 
 *Discovery → Discovery Schedules → New*:
+
 - **Name**: e.g. `LAN sweep`
-- **Discover**: IP range(s) / subnet, or a CI / Service
+- **Discover**: IP range(s)/subnet, or a CI / Service
 - **MID Server**: `gx10-mid` (or cluster)
 - **Credentials / Discovery behaviors**: attach the credential(s)
-- **Run**: set a schedule, or leave manual
-- Save → on the record use **Related Links → Discover / Execute Now** to run immediately
+- **Run**: schedule it, or leave manual
+- Save → **Related Links → Discover / Execute Now** to run immediately
 
-Monitor: **Discovery Status** / **Discovery Logs** on the schedule. Results land in the **CMDB**
-(e.g. `cmdb_ci_linux_server`) and **Device History**.
+Results land in the **CMDB** (`cmdb_ci_linux_server`, …), **Device History**, and the schedule's
+**Discovery Logs**.
 
 ---
 
-## 3. What success looks like
-- Discovery Status: **Complete** (or errors listing the reason).
-- New CIs appear in the CMDB with relationships.
-- **Device History** shows per-target results.
+## 9. What success looks like
+
+- **Discovery Status: Complete** (or errors that name a real cause).
+- New CIs in the CMDB with relationships; **Device History** shows per-target results.
 - MID log shows probe activity:
+
   ```bash
-  docker exec sn-mid_mid1 sh -c 'tail -f /opt/agent/logs/agent0.log.0'
+  docker exec sn-mid sh -c 'tail -f /opt/agent/logs/agent0.log.0'
   ```
-  (use `sn-mid` for the mid.server2 instance)
 
 ---
 
-## Troubleshooting
+## 10. Troubleshooting
 
-| Symptom | Cause / Fix |
+| Symptom | Cause / fix |
 |---|---|
-| Discovery stuck **Ready**, never runs | No validated MID selected; MID not Up/Validated; MID lacks Discovery capability. |
-| **No credential** / auth failures on targets | Missing/wrong **Discovery Credential** (not the MID user). Add at *Discovery → Credentials* and test. |
-| **Could not connect / timeout** to a target | MID can't reach the IP (firewall/route). Test from the MID container: `docker exec sn-mid_mid1 sh -c 'nc -vz <ip> 22'`. If the target is on the host's LAN and NAT blocks it, re-run the container with `--network host`. |
-| **"Could not decrypt file discovery whitelist"** / **"Unable to load key store"** | Keystore mismatch — see `APPENDIX.md` troubleshooting; run `setup-mid-fast.sh` (it clears a stale keystore). |
-| MID shows **Status: Down** but `docker ps` says **Up** | A UI **Restart MID** killed a *wrapper-less* MID (`Wrapper-less MID Server cannot be automatically restarted. Shutting down.`). Modern containers run `mid-supervisor.sh` and self-heal; otherwise `docker restart sn-mid`. Details in `APPENDIX.md`. |
-| Personal/dev instance: **no Discovery menu** | The plugin isn't installed yet — it is *not* a licensing block. Install `com.snc.discovery` as an admin (see the section at the top); retry on store errors. |
+| Console stuck on **"Activating Plugin…"** but nothing is running | Stale store badge (see §3). Confirm with `sys_progress_worker` (empty = finished) and `sys_plugin_log`. Press **Refresh**; the badge usually clears. |
+| `Plugin activated/upgraded failed` | §5 — read the log line, expect an automatic retry, avoid repeat clicks. |
+| Discovery tables exist but **no menu** | Not proof of install (§4) — usually debris from a different or failed plugin. Check `v_plugin`. |
+| Discovery stuck **Ready**, never runs | No validated MID selected; MID not Up/Validated; MID lacks the Discovery capability. |
+| **No credential / auth failures** on targets | Missing or wrong **Discovery Credential** (not the MID user). |
+| **Timeout / could not connect** | MID can't reach the IP — test from the container (see §6.3). |
+| **"Could not decrypt file discovery whitelist"** / **"Unable to load key store"** | Keystore mismatch — see `APPENDIX.md`; `setup-mid-fast.sh` clears a stale keystore. |
+| MID **Status: Down** while `docker ps` says **Up** | A UI **Restart MID** killed a *wrapper-less* MID. Modern containers run `mid-supervisor.sh` and self-heal; otherwise `docker restart sn-mid`. See `APPENDIX.md`. |
 
 ---
 
-## Quick reference — do I even need Discovery?
-- **Now**, the MID just needs to be **Up + Validated** to receive work. Discovery work only exists
-  after the `com.snc.discovery` plugin is installed.
-- Discovery requires the plugin + target credentials + a schedule/Quick Discovery. The MID itself is
-  the *agent* that performs the scan and reports back to the instance.
-- Order of operations: **install plugin → MID Up/Validated → target credentials → Quick Discovery
-  (one IP) → schedule (range)**.
+## Appendix — measured timeline (`dev296154`, 2026-10-27, UTC)
+
+Kept as evidence for the claims above:
+
+| Time | Event |
+|---|---|
+| 22:55 | `discovery_schedule` → `400 Invalid table` (Discovery genuinely absent) |
+| 23:02:28 | `PluginManagerWorker` created for **`com.snc.sa.metric`** (ITOM AIOps, *not* Discovery) |
+| 23:05 / 23:16 | UI **Restart MID** → `Wrapper-less MID Server cannot be automatically restarted. Shutting down.` → MID Down while the container stayed "Up" |
+| 23:19 | 114 `discovery*` tables existed (debris) while `v_plugin` had **no** `com.snc.discovery` record |
+| 23:23:00 | `com.snc.sa.metric` → **`Plugin activated/upgraded failed`** |
+| 23:26:02 | automatic retry starts (`Loaded 703 of 1,634 files`) |
+| 23:27:14 | `com.snc.sa.metric` → **`Plugin activated/upgraded successfuly`** |
+| — | `com.snc.discovery` still absent (`v_plugin` has no record, license inactive) |
+
+Lessons baked into this doc: the console badge lags; the worker row disappears on completion;
+`sys_plugins` needs `maint` (use `v_plugin`); table creation ≠ installation; and a wrapper-less
+MID does not survive a UI restart.

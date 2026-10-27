@@ -48,6 +48,12 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 - [Operations — Restart, Logs, Teardown](#operations--restart-logs-teardown)
 - [Running Discovery (use your MID)](DISCOVERY.md) — includes **how to check whether the
   Discovery plugin is even installed** (`./check-discovery.sh`) and how to activate it on a PDI
+- **[Installing Discovery — step by step](DISCOVERY.md#installing-and-running-discovery)** —
+  which plugin to activate (and which ones to avoid), how to **monitor the install**
+  (`sys_progress_worker` vs `sys_plugin_log` vs the misleading console badge, or
+  `./watch-plugin-install.sh com.snc.discovery`), how to **verify** it really installed
+  (`v_plugin`), what to do when it **fails**, and everything after: MID capabilities,
+  credentials, Quick Discovery, schedules
 - [Appendix — Real-World Bring-Up Notes (2026-10-27)](APPENDIX.md)
 - [Contributing & License](#contributing--license)
 
