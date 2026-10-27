@@ -27,11 +27,17 @@ obligation. Rule of thumb: *if the plugin offers an Install button, you may inst
 
 Two equivalent routes:
 
-1. **Direct plugin page** (fastest) — open
-   `https://<instance>.service-now.com/now/app-manager/home/plugin/id/com.snc.discovery/details`
-   and click **Install**.
-2. **Classic** — *All → System Definition → Plugins* → filter for **Discovery** /
-   `com.snc.discovery` → click the plugin name → **Activate**.
+1. **Classic plugin list** (most reliable, works on every release) — open
+   `https://<instance>.service-now.com/sys_plugins_list.do?sysparm_query=nameLIKEDiscovery`
+   and click the **Discovery** record. The form header shows **Status: Active/Inactive**; an
+   inactive plugin shows an **Activate** link.
+2. **Plugin/store card** — *All → System Definition → Plugins* (or the "Plugins for your
+   instance" card page), filter for `discovery`, click the **Discovery** card → **Activate plugin**.
+
+> ⚠️ `https://<instance>.service-now.com/now/app-manager/home/plugin/id/com.snc.discovery/details`
+> returns **"Plugin details not found"** on some releases (verified on Australia `dev296154`).
+> That is **not** an error with your instance or a failed activation — `com.snc.discovery` is a
+> legacy unscoped plugin, so it does not always appear in the store app-manager. Use route 1.
 
 Activation is not instant (often 10–40 min on a PDI). If it fails with a *store entitlement*
 or *activation failed* error, just retry — that is a known PDI flake, not a "you're not
@@ -53,6 +59,14 @@ they add no Discovery schedules and give the MID no Discovery work.
 
 - The application navigator gains **Discovery** (*Discovery Schedules*, *Discovery Status*,
   *Quick Discovery*) and **Discovery Definition**.
+- **No-terminal check (admin, browser session auth)** — paste this into the browser while logged
+  in as `admin`; it returns JSON with the plugin state:
+
+  ```
+  https://<instance>.service-now.com/api/now/table/sys_plugins?sysparm_query=idLIKEcom.snc.discovery&sysparm_fields=id,name,active
+  ```
+
+  `"active":"true"` ⇒ activated. `"active":"false"` ⇒ still inactive, go click Activate.
 - `https://<instance>.service-now.com/discovery_schedule_list.do` loads a list instead of
   redirecting / 404ing.
 - Unauthenticated probes are useless here (everything redirects to `session_timeout.do`), so
