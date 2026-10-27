@@ -37,6 +37,18 @@ Activation is not instant (often 10–40 min on a PDI). If it fails with a *stor
 or *activation failed* error, just retry — that is a known PDI flake, not a "you're not
 allowed" message.
 
+**Which plugin card to click.** Filtering the plugin/store list for `Discovery` on a PDI
+`dev####` instance typically shows two cards:
+
+| Card | Do this |
+|---|---|
+| **Discovery** | ✅ **This is the one.** Click **Activate plugin**. Drives Discovery schedules, probes, MID jobs. |
+| **File Based Discovery** | Optional add-on — discovers *installed software products* via file signatures on Windows/Unix. Not needed to scan hosts; add later if you want software inventory. |
+
+**Not** the right plugin: *ITOM Metric Management*, *Operational Intelligence*, *Health Log
+Analytics*, *Event Management* (the ITOM AIOps suite). Those are metrics/events/monitoring —
+they add no Discovery schedules and give the MID no Discovery work.
+
 ### Verify it actually installed
 
 - The application navigator gains **Discovery** (*Discovery Schedules*, *Discovery Status*,
