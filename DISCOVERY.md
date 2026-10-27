@@ -59,6 +59,18 @@ they add no Discovery schedules and give the MID no Discovery work.
 
 - The application navigator gains **Discovery** (*Discovery Schedules*, *Discovery Status*,
   *Quick Discovery*) and **Discovery Definition**.
+- **Activation is progressive — the menus lag the tables.** ServiceNow creates the ~130
+  Discovery tables first and adds the navigation modules near the end. Measured on
+  `dev296154`: 30 min in, 114 `discovery*` tables existed but only *Credentials* /
+  *Discovery Probes Trackers* modules were present, and **no** *Discovery Schedules* module.
+  Check whether the install is still running (admin, browser or REST):
+
+  ```
+  https://<instance>.service-now.com/api/now/table/sys_progress_worker?sysparm_query=name=PluginManagerWorker&sysparm_fields=name,state,sys_updated_on
+  ```
+
+  `"state":"running"` ⇒ wait. `"state":"complete"` ⇒ reload the nav (hard refresh) and the
+  Discovery menu will be there.
 - **No-terminal check (admin, browser session auth)** — paste this into the browser while logged
   in as `admin`; it returns JSON with the plugin state:
 
