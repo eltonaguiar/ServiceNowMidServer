@@ -163,6 +163,41 @@ docker exec sn-mid sh -c 'tail -120 /opt/agent/logs/agent0.log.0 | grep -c Unrec
 Then in ServiceNow: **MID Server → Servers → `gx10-mid`** (Status: Up; Validated: Yes once the
 instance-side handshake completes).
 
+## Troubleshooting: 401 "User Not Authenticated" / "cannot be authenticated"
+If `agent0.log` shows `HTTP/1.1 401 Unauthorized … User Not Authenticated` and
+`Could not authenticate user '<mid user>'`, the MID's credentials don't match the
+instance. In ServiceNow (User Administration → Users → the MID user), confirm:
+1. The user **exists** and is **Active**.
+2. It has the **`mid_server`** role (plus the SOAP roles).
+3. **Not** "Locked out"; "**Password needs reset**" is **unchecked**.
+4. **Set the password, then CLICK SAVE on the user form.** ⚠️ **This is the usual culprit** —
+   generating/typing a new password without clicking **Save** leaves the old (or blank)
+   password in place, so the MID keeps getting 401 even though the script used the value
+   you typed. Re-run the setup after saving.
+5. Re-run `./setup-mid-fast.sh` (or `./quickstart.sh`) with that exact password.
+
+## Running multiple MIDs on one host (e.g. `mid.server` + `mid.server2`)
+Each MID = its own agent volume + container + MID name (they connect outbound :443, so
+no port clash). The scripts accept overrides so a 2nd instance doesn't overwrite the 1st:
+```bash
+# 1st MID (defaults): user mid.server, name gx10-mid, volume mid_data, container sn-mid
+export SN_HOST=dev296154.service-now.com MID_USER=mid.server MID_NAME=gx10-mid
+read -rsp "pw: " MID_PASS; export MID_PASS; bash ./setup-mid-fast.sh
+
+# 2nd MID: separate volume+container+name; agent is fast-copied from mid_data (no re-download)
+AGENT_VOL=mid_data2 CONTAINER=sn-mid2 SEED_VOL=mid_data \
+  SN_HOST=dev296154.service-now.com MID_USER=mid.server2 MID_NAME=gx10-mid.server2 \
+  bash ./setup-mid-fast.sh
+```
+Result: two MID Server records (`gx10-mid` and `gx10-mid.server2`), each validating
+independently. A single user can also back multiple MIDs — separate users just give you
+independent password rotation and audit.
+
+> ⚠️ Note: `quickstart.sh` uses the **default** volume/container, so running it twice with
+> different users **replaces** the first MID. To keep two at once, use the `AGENT_VOL`/
+> `CONTAINER`/`SEED_VOL` overrides shown above (or pass them in the environment before
+> `./quickstart.sh`).
+
 ## Security notes
 - Secrets were read from a local file into env vars and **never echoed**; prefer `read -rsp`
   so the password never touches shell history or process args.
