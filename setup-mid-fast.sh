@@ -46,9 +46,14 @@ MID_XMX="${MID_XMX:-1024m}"
 BASE_IMG="moers/mid-server:latest"
 JDK_URL="https://corretto.aws/downloads/latest/amazon-corretto-17-aarch64-linux-jdk.tar.gz"
 CORE_URL="https://install.service-now.com/glide/distribution/builds/package/app-signed/mid-core/${MID_DATE}/mid-core.${MID_BUILD}.universal.universal.zip"
-AGENT_VOL="mid_data"
-JDK_VOL="mid_jdk17"
-CONTAINER="sn-mid"
+# Names are overridable so you can run MULTIPLE MIDs on one host (e.g. a 2nd MID
+# as mid.server2), each with its own agent volume + container + MID name:
+#   AGENT_VOL=mid_data2 CONTAINER=sn-mid2 MID_NAME=gx10-mid2 SEED_VOL=mid_data \
+#   SN_HOST=acme.service-now.com MID_USER=mid.server2 MID_PASS=... bash ./setup-mid-fast.sh
+AGENT_VOL="${AGENT_VOL:-mid_data}"
+JDK_VOL="${JDK_VOL:-mid_jdk17}"        # shared across instances is fine
+CONTAINER="${CONTAINER:-sn-mid}"
+SEED_VOL="${SEED_VOL:-mid_data}"         # source to fast-copy an agent from (no re-download)
 MID_UID=999
 MID_GID=999
 OPENS='--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED --add-opens=java.base/javax.crypto=ALL-UNNAMED --add-opens=java.base/sun.security.util=ALL-UNNAMED --add-opens=java.base/java.math=ALL-UNNAMED'
@@ -86,6 +91,20 @@ else
 fi
 
 # ------------------------------------------------- agent payload (fast path) --
+# If this volume is empty but a SEED volume already has the agent, copy it over
+# (fast local copy) so a SECOND instance doesn't re-download the 456MB payload.
+_cur="$(docker run --rm -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c 'ls /v/lib 2>/dev/null | wc -l' 2>/dev/null || echo 0)"
+_cur="$(printf '%s' "${_cur:-0}" | tr -dc '0-9')"; _cur="${_cur:-0}"
+if [ "$_cur" -lt 50 ] && [ "$SEED_VOL" != "$AGENT_VOL" ] && docker volume inspect "$SEED_VOL" >/dev/null 2>&1; then
+  _seed="$(docker run --rm -v "$SEED_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c 'ls /v/lib 2>/dev/null | wc -l' 2>/dev/null || echo 0)"
+  _seed="$(printf '%s' "${_seed:-0}" | tr -dc '0-9')"; _seed="${_seed:-0}"
+  if [ "$_seed" -ge 50 ]; then
+    log "Seeding '$AGENT_VOL' from existing agent volume '$SEED_VOL' (fast copy, no download)"
+    docker run --rm -v "$SEED_VOL":/src:ro -v "$AGENT_VOL":/dest --entrypoint /bin/bash "$BASE_IMG" \
+      -c "mkdir -p /dest && cp -a /src/. /dest/" || die "Seed copy from '$SEED_VOL' failed"
+    docker run --rm -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c 'rm -rf /v/logs/* 2>/dev/null; true'
+  fi
+fi
 LIBCOUNT="$(docker run --rm -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c 'ls /v/lib 2>/dev/null | wc -l' 2>/dev/null || echo 0)"
 LIBCOUNT="$(printf '%s' "${LIBCOUNT:-0}" | tr -dc '0-9')"; LIBCOUNT="${LIBCOUNT:-0}"
 if [ "$LIBCOUNT" -ge 50 ]; then
