@@ -55,7 +55,14 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 
 **Run these commands one at a time, in order.** First you tell the script who you are (the 4 settings below), then you run the setup script.
 
+> ⚡ **Fastest path (recommended):** just run `./quickstart.sh` and answer 4 prompts — it uses
+> `setup-mid-fast.sh`, which is **sudo-free** (no host `sudo`/password needed for `docker`-group users),
+> **idempotent**, **skips the ~478 MB download when the agent is already installed** (starts in seconds
+> on a re-run), and auto-fixes the "Unable to load keystore" trap. See [APPENDIX.md](APPENDIX.md).
+> The manual steps below still work and use the original `setup-mid-arm64.sh`.
+
 ### Step 1 — Tell it your details
+
 
 Copy-paste these four lines and **change the values** to match your own ServiceNow setup:
 
