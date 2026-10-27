@@ -55,6 +55,10 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 
 **Run these commands one at a time, in order.** First you tell the script who you are (the 4 settings below), then you run the setup script.
 
+> 🔁 **Instance refreshed or replaced (old one gone)?** Do **not** reinstall: the agent,
+> JDK and volumes are instance-agnostic. Run `./repoint-mid.sh` with the new host/user/password
+> — ~75 s, sudo-free, keeps your existing install (see the appendix for the runbook).
+>
 > ⚡ **Fastest path (recommended):** just run `./quickstart.sh` and answer 4 prompts — it uses
 > `setup-mid-fast.sh`, which is **sudo-free** (no host `sudo`/password needed for `docker`-group users),
 > **idempotent**, **skips the ~478 MB download when the agent is already installed** (starts in seconds
