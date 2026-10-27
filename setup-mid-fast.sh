@@ -61,7 +61,7 @@ OPENS='--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.
 log(){ printf '[+] %s\n' "$*"; }
 warn(){ printf '[!] %s\n' "$*"; }
 die(){ printf '[x] %s\n' "$*" >&2; exit 1; }
-vol_sh(){ docker run --rm -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c "$1"; }
+vol_sh(){ docker run --rm --user root -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c "$1"; }
 cleanup(){ rm -rf /tmp/mid-core.zip /tmp/mid_au 2>/dev/null || true; }
 trap cleanup EXIT
 
@@ -100,9 +100,9 @@ if [ "$_cur" -lt 50 ] && [ "$SEED_VOL" != "$AGENT_VOL" ] && docker volume inspec
   _seed="$(printf '%s' "${_seed:-0}" | tr -dc '0-9')"; _seed="${_seed:-0}"
   if [ "$_seed" -ge 50 ]; then
     log "Seeding '$AGENT_VOL' from existing agent volume '$SEED_VOL' (fast copy, no download)"
-    docker run --rm -v "$SEED_VOL":/src:ro -v "$AGENT_VOL":/dest --entrypoint /bin/bash "$BASE_IMG" \
-      -c "mkdir -p /dest && cp -a /src/. /dest/" || die "Seed copy from '$SEED_VOL' failed"
-    docker run --rm -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c 'rm -rf /v/logs/* 2>/dev/null; true'
+    docker run --rm --user root -v "$SEED_VOL":/src:ro -v "$AGENT_VOL":/dest --entrypoint /bin/bash "$BASE_IMG" \
+      -c "mkdir -p /dest && cp -a /src/. /dest/ && chown -R ${MID_UID}:${MID_GID} /dest" || die "Seed copy from '$SEED_VOL' failed"
+    docker run --rm --user root -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c 'rm -rf /v/logs/* 2>/dev/null; true'
   fi
 fi
 LIBCOUNT="$(docker run --rm -v "$AGENT_VOL":/v --entrypoint /bin/bash "$BASE_IMG" -c 'ls /v/lib 2>/dev/null | wc -l' 2>/dev/null || echo 0)"
@@ -126,8 +126,8 @@ else
   unzip -q /tmp/mid-core.zip -d /tmp/mid_au || die "unzip failed"
   [ -d /tmp/mid_au/agent ] || die "Unexpected zip layout — no agent/ dir"
   log "Overlaying agent into volume (sudo-free, via docker)"
-  docker run --rm -v "$AGENT_VOL":/dest -v /tmp/mid_au/agent:/src:ro --entrypoint /bin/bash "$BASE_IMG" \
-    -c "mkdir -p /dest && cp -a /src/. /dest/" || die "Overlay failed"
+    docker run --rm --user root -v "$AGENT_VOL":/dest -v /tmp/mid_au/agent:/src:ro --entrypoint /bin/bash "$BASE_IMG" \
+      -c "mkdir -p /dest && cp -a /src/. /dest/ && chown -R ${MID_UID}:${MID_GID} /dest" || die "Overlay failed"
 fi
 
 # --------------------------------------------------------------- config.xml --
