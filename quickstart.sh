@@ -2,6 +2,12 @@
 # quickstart.sh — dead-simple ARM64 MID Server setup.
 # Prompts for the 4 settings (password hidden, never stored), then runs the setup.
 # Prefers setup-mid-fast.sh (sudo-free, idempotent) if present, else setup-mid-arm64.sh.
+#
+# HOW TO RUN:  ./quickstart.sh     <-- run it as a FILE, do NOT paste into a shell.
+if [ "${BASH_SOURCE[0]:-}" != "$0" ]; then
+  printf '[x] Do not paste or source this script. Run it as a file:  bash %s\n' "${BASH_SOURCE[0]:-$0}" >&2
+  return 1 2>/dev/null || exit 1
+fi
 set -euo pipefail
 
 echo "ServiceNow MID Server (ARM64) — quickstart"

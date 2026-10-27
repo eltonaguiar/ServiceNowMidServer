@@ -16,11 +16,28 @@
 #   ./setup-mid-fast.sh
 #
 # Or just run ./quickstart.sh and answer the prompts.
+#
+# HOW TO RUN:   bash ./setup-mid-fast.sh     <-- run it as a FILE
+# Do NOT paste this file's contents into an interactive shell (the checks below
+# would exit your shell). Use ./quickstart.sh for a guided, prompt-driven run.
+if [ "${BASH_SOURCE[0]:-}" != "$0" ]; then
+  printf '[x] Do not paste or source this script. Run it as a file:  bash %s\n' "${BASH_SOURCE[0]:-$0}" >&2
+  printf '    Easiest: ./quickstart.sh\n' >&2
+  return 1 2>/dev/null || exit 1
+fi
+
 set -euo pipefail
 
-: "${SN_HOST:?Set SN_HOST (e.g. export SN_HOST=acme.service-now.com)}"
-: "${MID_USER:?Set MID_USER (e.g. export MID_USER=mid.server)}"
-: "${MID_PASS:?Set MID_PASS (read -rsp \"pw: \" MID_PASS; export MID_PASS)}"
+# Friendly requirement checks (clear guidance instead of an abrupt set -e exit).
+_missing=0
+[ -n "${SN_HOST:-}" ] || { printf '[x] SN_HOST is not set.   export SN_HOST=acme.service-now.com\n' >&2; _missing=1; }
+[ -n "${MID_USER:-}" ] || { printf '[x] MID_USER is not set.   export MID_USER=mid.server\n' >&2; _missing=1; }
+[ -n "${MID_PASS:-}" ] || { printf '[x] MID_PASS is not set.   read -rsp "pw: " MID_PASS; export MID_PASS\n' >&2; _missing=1; }
+if [ "$_missing" -eq 1 ]; then
+  printf '[!] Easiest: run  ./quickstart.sh  — it prompts for host, user, password, name.\n' >&2
+  exit 1
+fi
+
 MID_NAME="${MID_NAME:-$(hostname)-mid}"
 MID_BUILD="${MID_BUILD:-australia-02-11-2026__patch3-05-25-2026_06-12-2026_1106}"
 MID_DATE="${MID_DATE:-2026/06/12}"
