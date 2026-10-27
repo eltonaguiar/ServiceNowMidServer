@@ -275,3 +275,85 @@ curl -s -u "$MID_USER:$MID_PASS" \
 
 > Bonus: `repoint-mid.sh` doubles as the recovery procedure for a MID whose keystore or
 > registration is corrupt, and it is safe to run repeatedly.
+
+---
+
+## Two MIDs, one instance: name collision + "encryption keys do not match" (2026-10-27, freebuff)
+
+Symptom: the instance showed **two** MID records — `gx10-mid` and `gx10-mid.server2` — endpoints
+flapping between `Up`/`Down`, `Validated: validating` never settling, plus these MID errors:
+
+```
+Unable to load key store, MID server will not able to function
+Could not decrypt file discovery whitelist after sync
+MID Server encryption keys do not match and are no longer valid.
+  To restore proper functionality, invalidate and re-validate the MID Server.
+```
+
+Cause, in order:
+1. **Two agents each ran a setup script.** Every run of `setup-mid-arm64.sh` / `setup-mid-fast.sh`
+   begins with `docker rm -f sn-mid`, and the fast path also clears the keystore. So the MID
+   restarted repeatedly with a **new keypair** each time.
+2. **The MID name was taken.** When the kernel came up while another agent still owned the name,
+   ServiceNow assigned **`gx10-mid.server2`** and wrote that name back into `config.xml` — so the
+   two containers permanently disagreed about who they were, and each re-registered.
+3. **Keypair rotation without re-validation.** A regenerated keystore means the instance holds keys
+   the MID no longer has → the "encryption keys do not match" error, and file-discovery whitelist
+   sync fails until the MID is re-validated.
+
+How to tell which container is which:
+
+```bash
+docker ps -a --filter ancestor=moers/mid-server:latest --format '{{.Names}} | {{.Status}}'
+docker exec sn-mid        sh -c 'grep -o "name=\"name\" value=\"[^\"]*\"" /opt/agent/config.xml'
+docker exec sn-mid_mid1   sh -c 'grep -o "name=\"name\" value=\"[^\"]*\"" /opt/agent/config.xml'
+docker inspect sn-mid_mid1 --format '{{range .Mounts}}{{.Name}}->{{.Destination}} {{end}}'
+```
+
+Fix (one MID, one name, one clean registration):
+1. **Stop the duplicate** — `docker stop sn-mid_mid1` (the container that is *not* using `mid_data`).
+2. On the keeper, set `name="gx10-mid"`, blank `mid_sys_id` / `keypairs.mid_id`, delete
+   `security/agent_keystore` + `work/remote.properties`, then restart:
+   `./repoint-mid.sh` does all of this and re-writes the password as **plaintext** so the MID
+   can re-encrypt it with the fresh keystore.
+   > A config left holding an `ENCv2[...]` password whose keystore was deleted will fail at
+   > startup with `DefaultMidServerEncrypter.decrypt` — that is expected; rewrite it as plaintext.
+3. **An admin finishes it in the UI** (these steps are ACL-blocked for the MID user — a REST
+   `DELETE /api/now/table/ecc_agent/<sys_id>` returns `403 ACL Exception Delete Failed`):
+   - *MID Server → MID Servers* → `gx10-mid.server2` → **Delete**.
+   - open `gx10-mid` → **Invalidate**, then **Validate** → `Validated: Yes`.
+4. Confirm, from the shell:
+
+```bash
+curl -s -u "$MID_USER:$MID_PASS" \
+ "https://$SN_HOST/api/now/table/ecc_agent?sysparm_fields=name,status,validated,last_refreshed&sysparm_limit=20"
+# only ONE record, status Up, last_refreshed ticking
+```
+
+Rule of thumb: **never run two MID agents with the same name against one instance**, and don't
+re-run a setup script on a healthy MID — every keystore wipe costs you a re-validation cycle.
+
+## Running Discovery on this MID — what the MID can and cannot do
+
+The MID is only the **execution** end: probes/patterns and the Discovery schedule live on the
+instance. You cannot "start discovery from the MID". Checklist:
+
+1. **MID side** — the MID must be `Validated: Yes` and advertise the Discovery-related
+   capabilities. A healthy container reports, among others:
+   `SSH, WMI, SNMP, REST, SOAP, VMware, PowerShell, Kubernetes, AWS, Azure, Ansible, OpenStack,
+   Cloud Management, Resolve DNS, ALL` (read them from `ecc_agent_capability`).
+2. **Instance side** — Discovery must be installed/entitled. Check by typing `Discovery` in the
+   filter navigator; if the menu is missing, an admin activates it under
+   *System Definition → Plugins* (`Discovery`). Note: on a non-entitled instance the
+   `discovery_*` tables are not reachable to a plain MID user.
+3. **Credentials** — *Discovery → Credentials → New*: SSH (Linux/Unix), Windows (WMI),
+   SNMPv2c/v3 as needed, then assign them to the schedule.
+4. **Schedule** — *Discovery → Discovery Schedules → New*: give it a name, set **MID Server =
+   gx10-mid**, add the targets (IP ranges / serverless ranges / a host list), attach the
+   credentials, set Run = *On demand*, save, then **Discover now**.
+   Results: *Discovery → Status* / ECC Queue, and CIs land in the CMDB.
+5. **Networking caveat (important for this install)** — the MID runs with Docker **bridge**
+   networking, so it can only reach what is routable from inside the container
+   (`172.17.0.0/16` + outbound). To scan a real LAN, recreate the container with
+   `--network host` (add it to the `docker run` in `setup-mid-fast.sh` / `repoint-mid.sh`).
+   WMI/SSH/SNMP probes are the ones that care.
