@@ -92,9 +92,19 @@ else
 fi
 
 # ------------------------------------------------- download Australia payload --
-log "Downloading MID core payload: ${MID_BUILD}"
-wget -q -O /tmp/mid-core.zip "$CORE_URL" \
+# Show the size up front + a progress bar so the big (~456 MB) payload isn't a
+# silent freeze. --show-progress forces the bar even when output isn't a TTY.
+SIZE_BYTES="$(wget --spider --server-response "$CORE_URL" 2>&1 | awk '/Content-Length:/{v=$2} END{print v}' || true)"
+case "${SIZE_BYTES:-}" in ''|*[!0-9]*) SIZE_BYTES=0 ;; esac
+if [ "$SIZE_BYTES" -gt 0 ]; then
+  log "Downloading MID core payload: ${MID_BUILD} (~$((SIZE_BYTES/1048576)) MB)"
+else
+  log "Downloading MID core payload: ${MID_BUILD} (~456 MB)"
+fi
+wget --show-progress --progress=bar:force:noscroll --tries=3 --timeout=30 \
+  -O /tmp/mid-core.zip "$CORE_URL" \
   || die "Download failed. Check MID_BUILD / MID_DATE and network access to install.service-now.com."
+log "Downloaded $(du -h /tmp/mid-core.zip 2>/dev/null | cut -f1) -> /tmp/mid-core.zip"
 
 log "Unzipping with system unzip (bypasses the MID's internal size limit)"
 rm -rf /tmp/mid_au && mkdir -p /tmp/mid_au

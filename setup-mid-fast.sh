@@ -74,8 +74,18 @@ LIBCOUNT="$(printf '%s' "${LIBCOUNT:-0}" | tr -dc '0-9')"; LIBCOUNT="${LIBCOUNT:
 if [ "$LIBCOUNT" -ge 50 ]; then
   log "Agent already installed in '$AGENT_VOL' ($LIBCOUNT jars) — SKIPPING 478MB download (fast path)"
 else
-  log "Fresh install: downloading MID core payload ($MID_BUILD) — ~478MB one-time"
-  wget -q -O /tmp/mid-core.zip "$CORE_URL" || die "Download failed — check MID_BUILD/MID_DATE and network to install.service-now.com"
+  # Show size up front + a forced progress bar so the big (~456 MB) payload
+  # isn't a silent freeze. --show-progress works even when output isn't a TTY.
+  SIZE_BYTES="$(wget --spider --server-response "$CORE_URL" 2>&1 | awk '/Content-Length:/{v=$2} END{print v}' || true)"
+  case "${SIZE_BYTES:-}" in ''|*[!0-9]*) SIZE_BYTES=0 ;; esac
+  if [ "$SIZE_BYTES" -gt 0 ]; then
+    log "Fresh install: downloading MID core payload ($MID_BUILD) ~$((SIZE_BYTES/1048576)) MB — one-time, progress below"
+  else
+    log "Fresh install: downloading MID core payload ($MID_BUILD) ~456 MB — one-time, progress below"
+  fi
+  wget --show-progress --progress=bar:force:noscroll --tries=3 --timeout=30 \
+    -O /tmp/mid-core.zip "$CORE_URL" || die "Download failed — check MID_BUILD/MID_DATE and network to install.service-now.com"
+  log "Downloaded $(du -h /tmp/mid-core.zip 2>/dev/null | cut -f1) -> /tmp/mid-core.zip"
   rm -rf /tmp/mid_au && mkdir -p /tmp/mid_au
   unzip -q /tmp/mid-core.zip -d /tmp/mid_au || die "unzip failed"
   [ -d /tmp/mid_au/agent ] || die "Unexpected zip layout — no agent/ dir"
