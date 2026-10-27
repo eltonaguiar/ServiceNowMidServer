@@ -207,3 +207,71 @@ independent password rotation and audit.
 - Original ARM64 approach + `setup-mid-arm64.sh`: prior agents (see README).
 - This bring-up + troubleshooting notes (env guards, sudo-free volume ops, skip-payload
   fast path, keystore regeneration): GHCopilot + peer agents (opencode / freebuff), 2026-10-27.
+
+---
+
+## Re-pointing an existing MID onto a refreshed / replaced instance — `repoint-mid.sh` (2026-10-27, freebuff)
+
+The same session also packaged the *"our instance was refreshed, the old one is gone"*
+case as a script, because re-installing for that is wasted effort — the ARM64 JDK, the
+MID jars and the volumes are instance-agnostic; only `config.xml`, the registration ids
+and the keystore are tied to an instance.
+
+```bash
+export SN_HOST="dev123456.service-now.com"   # the NEW instance
+export MID_USER="mid.server"
+export MID_PASS='***PASSWORDHERE***'         # keep the quotes
+export MID_NAME="gx10-mid"
+./repoint-mid.sh                             # ~75 s, no sudo, no re-download, no reinstall
+```
+
+When to use which script:
+
+| Situation | Script |
+|---|---|
+| First time on this machine (no agent in `mid_data`) | `quickstart.sh` / `setup-mid-fast.sh` |
+| Agent already installed, **same** instance, just bounced | `docker restart sn-mid` (or `setup-mid-fast.sh` fast-relaunch path) |
+| Agent already installed, **new/refreshed** instance | **`repoint-mid.sh`** |
+
+What it does, in order: (1) credential pre-check via
+`/api/now/table/sys_user` — **401 stops it in ~2 s with the exact reason**
+(200 = ok, 403 = authenticated but no REST role); (2) rewrites `config.xml`
+(url + user + XML-escaped password) and, **only when the instance actually changed**,
+blanks `mid_sys_id` / `keypairs.mid_id` so the MID registers fresh instead of binding the
+dead instance's record; (3) clears stale keystore / `work/remote.properties` / cache;
+(4) recreates the container with the same direct-`java` launch; (5) polls until
+`Successfully connected to instance:` appears, then prints the build tag.
+
+**Nothing has to be created by hand in ServiceNow.** The MID creates its own `ecc_agent`
+record on first contact (Status: Up, then Validated: Yes). What *must* exist on the
+instance is the **user** (`mid.server`, role `mid_server`) — the MID cannot create its own
+login, and a wrong/missing one is the `SOAP 401` trap.
+
+### Extra failure modes found while scripting the re-point (beyond those above)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `File: /opt/agent/config.xml may be malformed, load operation returned null` | the write-back ran `docker run -i … -c 'cat > config.xml'` **without a stdin redirect** → empty file | always redirect stdin (`… < config.new.xml`) and **read the file back** to confirm it contains the new host |
+| broken `…/>/>` tags, then the same "malformed" error | rebuilding the whole `<parameter …/>` element instead of replacing its **value** | replace the value only, and `xml.dom.minidom.parse()` the result before the MID ever reads it |
+| `&` in the password breaks the config | password inserted raw | XML-escape `& < > "` (`&` → `&amp;`, …). A `secure="true"` plain-text value is accepted and re-encrypted by the MID on startup |
+| the wrong parameter got edited | `name="mid.instance.password"` appears **twice** — once live, once in an XML comment showing the CyberArk format | replace only the **first** match (`count=1`) |
+| container keeps vanishing mid-startup | another concurrent run of `setup-mid-arm64.sh`/`setup-mid-fast.sh` (both start with `docker rm -f sn-mid`) | check `docker events --since 10m`; re-run the script — it is idempotent and preserves the registration |
+| `Unable to load key store, MID server will not able to function` | keystore missing **on that one startup** | normal once: the next lines are `Keystore file security/agent_keystore not found. Creating new keystore file.` → `Updated public key, new certificate`. Only investigate if it repeats every boot |
+
+Verification that closed it out on `dev296154` (2026-10-27):
+
+```
+INFO (StartupSequencer) [UserConfigTest:74] User mid.server has all necessary roles
+INFO (StartupSequencer) [InstanceConnectivityTest:36] Successfully connected to instance:
+INFO (StartupSequencer) [InstanceConnectivityTest:41]  Build tag: glide-australia-02-11-2026__patch3-05-25-2026
+INFO (AutoUpgrade:267) Installed packages are up-to-date.
+```
+
+```bash
+curl -s -u "$MID_USER:$MID_PASS" \
+  "https://$SN_HOST/api/now/table/ecc_agent?sysparm_fields=name,status,last_refreshed&sysparm_query=nameLIKEgx10"
+# {"result":[{"name":"gx10-mid","status":"Up","last_refreshed":"2026-10-27 22:48:29"}]}
+```
+
+> Bonus: `repoint-mid.sh` doubles as the recovery procedure for a MID whose keystore or
+> registration is corrupt, and it is safe to run repeatedly.
