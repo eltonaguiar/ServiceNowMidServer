@@ -41,7 +41,11 @@ command -v curl >/dev/null || { echo "ERROR: curl not found" >&2; exit 2; }
 
 # Tables created BY the Discovery plugin (com.snc.discovery). If these are all
 # "Invalid table", the plugin is not installed.
-DISCOVERY_TABLES=(discovery_schedule discovery_scan discovery_range_set discovery_ip_address discovery_tcp_port)
+# NOTE: measured on Australia (dev296154, 2026-10-27) — `discovery_schedule` and
+# `discovery_range_item` are the reliable signals. Names like discovery_scan /
+# discovery_probe / discovery_ip_address do NOT exist as instance tables (probes
+# run on the MID), so do not treat them as installation evidence.
+DISCOVERY_TABLES=(discovery_schedule discovery_range_item)
 
 # Tables that already exist on a base instance WITHOUT the plugin — proves the
 # probe works, and reminds you not to treat them as evidence of Discovery.
