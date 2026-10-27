@@ -176,6 +176,45 @@ instance. In ServiceNow (User Administration → Users → the MID user), confir
    you typed. Re-run the setup after saving.
 5. Re-run `./setup-mid-fast.sh` (or `./quickstart.sh`) with that exact password.
 
+## ⚠️ "Restart MID" in the UI kills a wrapper-less MID (fixed by `mid-supervisor.sh`)
+
+**Symptom:** you click **Related Links → Restart MID** on the MID Server record (or change
+something that requests a restart). Afterwards the instance shows **Status: Down**, but
+`docker ps` still says the container is **Up**. `agent0.log` ends with:
+
+```
+[RestartHandler] Wrapper-less MID Server cannot be automatically restarted.
+Shutting down. MANUALLY START THE MID SERVER TO CONTINUE
+[MIDServerState] MID Server stopped
+```
+
+**Why:** this container runs the MID *wrapper-less* — we exec
+`com.service_now.mid.Main start` directly, because ServiceNow's service wrapper is x86-only
+and this host is ARM64. A restart request therefore terminates the JVM and there is no
+wrapper to bring it back. Only `tail` is left running inside the container, which is why
+Docker reports "Up".
+
+**Fix (as of this version):** the container now launches `mid-supervisor.sh`, which
+relaunches the JVM whenever it exits (10 s delay, backing off to 60 s after 3 fast crashes).
+A UI "Restart MID" is now a real restart. Verified: killing the JVM (`rc=143`) produced
+`[supervisor] … MID exited rc=143 after 39s — relaunching in 10s` → `starting MID JVM`, and
+the instance went back to **Up**.
+
+**Manual recovery (old containers / no supervisor):**
+
+```bash
+docker restart sn-mid          # NOT "Restart MID" in the UI
+docker ps --format '{{.Names}}\t{{.Status}}'
+docker exec sn-mid sh -c 'pgrep -af service_now.mid.Main'    # must show the java process
+```
+
+**Checking whether the MID JVM is alive (not just the container):**
+
+```bash
+docker exec sn-mid sh -c 'pgrep -af service_now.mid.Main' || echo "JVM DEAD - container is a shell only"
+docker exec sn-mid sh -c 'grep "\[supervisor\]" /opt/agent/logs/console.log | tail -5'
+```
+
 ## Running multiple MIDs on one host (e.g. `mid.server` + `mid.server2`)
 Each MID = its own agent volume + container + MID name (they connect outbound :443, so
 no port clash). The scripts accept overrides so a 2nd instance doesn't overwrite the 1st:

@@ -56,6 +56,9 @@ CONTAINER="${CONTAINER:-sn-mid}"
 SEED_VOL="${SEED_VOL:-mid_data}"         # source to fast-copy an agent from (no re-download)
 MID_UID=999
 MID_GID=999
+# Directory of this script — needed to bind-mount mid-supervisor.sh into the container.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$SCRIPT_DIR/mid-supervisor.sh" ] || { printf '[x] mid-supervisor.sh not found next to this script (%s).\n    Clone the whole repo, do not copy setup-mid-fast.sh alone.\n' "$SCRIPT_DIR" >&2; exit 1; }
 OPENS='--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED --add-opens=java.base/javax.crypto=ALL-UNNAMED --add-opens=java.base/sun.security.util=ALL-UNNAMED --add-opens=java.base/java.math=ALL-UNNAMED'
 
 log(){ printf '[+] %s\n' "$*"; }
@@ -150,9 +153,11 @@ log "Launching container $CONTAINER"
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run -d --name "$CONTAINER" \
   --platform linux/arm64 --restart unless-stopped --user root \
+  -e OPENS="$OPENS" -e MID_XMX="$MID_XMX" \
   -v "$AGENT_VOL":/opt/agent -v "$JDK_VOL":/opt/jdk17 \
+  -v "$SCRIPT_DIR/mid-supervisor.sh":/opt/mid-supervisor.sh:ro \
   --entrypoint /bin/bash "$BASE_IMG" \
-  -c "cd /opt/agent; rm -f /opt/agent/work/mid.pid; OPENS='$OPENS'; su mid -s /bin/bash -c \"cd /opt/agent && nohup /opt/jdk17/bin/java -Xmx${MID_XMX} -Djava.security.manager=allow \$OPENS -classpath 'lib/*:extlib/*' com.service_now.mid.Main start >/opt/agent/logs/console.log 2>&1 &\"; exec tail -F /opt/agent/logs/agent0.log.0 /opt/agent/logs/console.log" >/dev/null
+  -c "chmod +x /opt/mid-supervisor.sh 2>/dev/null; su mid -s /bin/bash -c 'exec /opt/mid-supervisor.sh' & exec tail -F /opt/agent/logs/agent0.log.0 /opt/agent/logs/console.log" >/dev/null
 
 # ------------------------------------------------------------------- poll ---
 log "Waiting for 'Successfully connected' (up to 180s)..."

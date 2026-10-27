@@ -80,12 +80,13 @@ they add no Discovery schedules and give the MID no Discovery work.
     -w '\n[http %{http_code}]\n'
   ```
 
-  Verified on `dev296154` (2026-10-27): `discovery_schedule`, `discovery_scan`,
-  `discovery_range_set`, `discovery_ip_address` → **400 Invalid table** ⇒ Discovery is
-  **not installed yet**, even though base-adjacent tables (`discovery_credentials`,
-  `discovery_range`, `discovery_range_item`, `discovery_status`, `discovery_classy`,
-  `discovery_device_history`) already exist. Don't be fooled by those — they ship with the
-  base platform / ITOM base, not the Discovery app.
+  Verified on `dev296154` (2026-10-27): **Discovery IS installed** after activation —
+  `discovery_schedule` (label *Discovery Schedule*), `discovery_status`, `discovery_range`
+  (label *Discovery Range Set*, 1 default record), `discovery_device_history`, plus the nav
+  modules *Discovery Probes Trackers*, *Discovery Log*, *Traffic Based Discovery* and
+  *Credentials*. Before activation `discovery_schedule` returned `400 Invalid table`.
+  Base-adjacent tables (`discovery_credentials`, `discovery_classy`, `discovery_range`) exist
+  **even without** the plugin, so they are *not* evidence on their own.
 
 > **Different product, do not confuse:** *System Security → Data Discovery (Classic) → All Data
 > Patterns* is the **data-anonymization / data-pattern** tool (privacy/GDPR). It is **not**
@@ -166,6 +167,7 @@ Monitor: **Discovery Status** / **Discovery Logs** on the schedule. Results land
 | **No credential** / auth failures on targets | Missing/wrong **Discovery Credential** (not the MID user). Add at *Discovery → Credentials* and test. |
 | **Could not connect / timeout** to a target | MID can't reach the IP (firewall/route). Test from the MID container: `docker exec sn-mid_mid1 sh -c 'nc -vz <ip> 22'`. If the target is on the host's LAN and NAT blocks it, re-run the container with `--network host`. |
 | **"Could not decrypt file discovery whitelist"** / **"Unable to load key store"** | Keystore mismatch — see `APPENDIX.md` troubleshooting; run `setup-mid-fast.sh` (it clears a stale keystore). |
+| MID shows **Status: Down** but `docker ps` says **Up** | A UI **Restart MID** killed a *wrapper-less* MID (`Wrapper-less MID Server cannot be automatically restarted. Shutting down.`). Modern containers run `mid-supervisor.sh` and self-heal; otherwise `docker restart sn-mid`. Details in `APPENDIX.md`. |
 | Personal/dev instance: **no Discovery menu** | The plugin isn't installed yet — it is *not* a licensing block. Install `com.snc.discovery` as an admin (see the section at the top); retry on store errors. |
 
 ---
