@@ -165,11 +165,25 @@ must be **active** too.
    The MID picks up new capabilities automatically after the plugin installs — no restart needed.
 2. **Discovery credentials** — *Discovery → Credentials → New*, matching the target OS:
    - **Linux**: SSH username + password (or private key) + optional sudo password
-   - **Windows**: Domain/Workgroup admin (WMI)
+   - **Windows**: Domain/Workgroup admin (WMI) — **needs a Windows MID Server, see the warning below**
    - **Network devices**: SNMP community
 
    These are separate from the MID user. A wrong or missing credential is the #1 cause of
    "no results".
+
+> ### ⚠️ Windows targets cannot be discovered by a Linux MID Server
+> Measured on `dev296154` (2026-10-28): a Windows host with 135/445/5985 open, WMI firewall
+> rules enabled and `LocalAccountTokenFilterPolicy=1` still fails, because `Windows - Classify`
+> is a **WMI probe** (`discovery_probes_wmi`) executed by WMIRunner locally on the MID:
+>
+> ```
+> Warning  [Windows Classify / WMIRunner]  MID Server isn't Windows, unable to run ScriptRunner
+> Info     [Windows Classify / WMIRunner]  Active, couldn't classify: No WMI connection, now finished
+> ```
+>
+> WMI discovery requires a **Windows** MID Server. With a Linux/ARM64 MID you can discover
+> Linux/Unix and SNMP devices only; add a Windows MID alongside it for Windows hosts. Treating
+> a Windows box as *Unix* over OpenSSH is not a workaround — the classify step is WMI-only.
 3. **Network reachability** — the MID must reach targets **outbound**: SSH 22, WMI 135/445/5985,
    SNMP 161, ICMP. In this repo the MID runs in Docker; bridge/NAT gives outbound LAN access.
    Check from inside the container before blaming ServiceNow:
@@ -234,6 +248,7 @@ Results land in the **CMDB** (`cmdb_ci_linux_server`, …), **Device History**, 
 | Discovery stuck **Ready**, never runs | No validated MID selected; MID not Up/Validated; MID lacks the Discovery capability. |
 | **No credential / auth failures** on targets | Missing or wrong **Discovery Credential** (not the MID user). |
 | **Timeout / could not connect** | MID can't reach the IP — test from the container (see §6.3). |
+| **Windows target: `MID Server isn't Windows, unable to run ScriptRunner`** | WMI probes are Windows-MID only. Ports 135/445/5985 open, correct local-admin credential and `LocalAccountTokenFilterPolicy=1` are **not enough** on a Linux MID — deploy a Windows MID Server for Windows hosts (see §6.2). |
 | **"Could not decrypt file discovery whitelist"** / **"Unable to load key store"** | Keystore mismatch — see `APPENDIX.md`; `setup-mid-fast.sh` clears a stale keystore. |
 | MID **Status: Down** while `docker ps` says **Up** | A UI **Restart MID** killed a *wrapper-less* MID. Modern containers run `mid-supervisor.sh` and self-heal; otherwise `docker restart sn-mid`. See `APPENDIX.md`. |
 
