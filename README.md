@@ -55,6 +55,10 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
   (`v_plugin`), what to do when it **fails**, and everything after: MID capabilities,
   credentials, Quick Discovery, schedules
 - [Appendix — Real-World Bring-Up Notes (2026-10-27)](APPENDIX.md)
+- **[Appendix — MID Server on Windows 11](APPENDIX_WINDOWS_MID.md)** — the *other* MID path: native
+  Windows MID for WMI/Discovery (the MSI refuses to install on Windows 11 → ZIP workaround),
+  `config.xml` escaping rules, why REST cannot set MID passwords, credential verification via
+  `GetMIDInfo.do?SOAP`, validation, and two-MID routing
 - [Contributing & License](#contributing--license)
 
 ---

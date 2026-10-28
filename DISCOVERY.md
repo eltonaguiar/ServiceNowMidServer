@@ -184,6 +184,10 @@ must be **active** too.
 > WMI discovery requires a **Windows** MID Server. With a Linux/ARM64 MID you can discover
 > Linux/Unix and SNMP devices only; add a Windows MID alongside it for Windows hosts. Treating
 > a Windows box as *Unix* over OpenSSH is not a workaround — the classify step is WMI-only.
+>
+> **Full walkthrough:** [`APPENDIX_WINDOWS_MID.md`](APPENDIX_WINDOWS_MID.md) — Windows MID install
+> (MSI is OS-gated on Windows 11 → use the ZIP), `config.xml` escaping, MID password rules,
+> validation, and two-MID routing.
 3. **Network reachability** — the MID must reach targets **outbound**: SSH 22, WMI 135/445/5985,
    SNMP 161, ICMP. In this repo the MID runs in Docker; bridge/NAT gives outbound LAN access.
    Check from inside the container before blaming ServiceNow:
