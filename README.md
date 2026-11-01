@@ -47,6 +47,7 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 - [Verify It Worked (incl. when to check ServiceNow)](#verify-it-worked)
 - [Troubleshooting — Every Error We Hit](#troubleshooting--every-error-we-hit)
 - [Operations — Restart, Logs, Teardown](#operations--restart-logs-teardown)
+- [Recovering a Down MID — the runbook we actually ran](#recovering-a-down-mid--the-runbook-we-actually-ran)
 - [Running Discovery (use your MID)](DISCOVERY.md) — includes **how to check whether the
   Discovery plugin is even installed** (`./check-discovery.sh`) and how to activate it on a PDI
 - **[Installing Discovery — step by step](DISCOVERY.md#installing-and-running-discovery)** —
@@ -573,6 +574,38 @@ docker volume rm mid_data mid_jdk17
 **Persistence:** `mid_data` holds your `config.xml` (credentials + registration) and `mid_jdk17` holds Java. Both survive `docker rm`, so you can remove and re-run the same `docker run` command without re-registering.
 
 ---
+
+## Recovering a Down MID — the runbook we actually ran
+
+This is the sequence used on 2026-10-27 when `gx10-mid` showed **Down** in the instance while `docker ps` happily
+reported the container `Up`. Work it top-down: each step's *answer* decides whether you go on or stop.
+
+| # | Command | What the answer means | If it looks wrong |
+|---|---|---|---|
+| 1 | `docker ps -a --format '{{.Names}}\t{{.Status}}'` | `Up` = the container exists but proves nothing; `Restarting (1)` = the JVM is dying on boot | go to [Troubleshooting](#troubleshooting--every-error-we-hit) for the boot error |
+| 2 | `docker exec sn-mid pgrep -af service_now.mid.Main` | a `java … service_now.mid.Main` line = the JVM is alive, so the problem is *credentials / validation*, not the process | no output = **JVM dead**, container is an empty shell → step 3 |
+| 3 | `docker exec sn-mid sh -c 'tail -120 /opt/agent/logs/agent0.log.0'` | `Operational State=UP` / `connected to instance host` = healthy; `UnrecoverableKeyException` / `BadPaddingException` = stale keystore; `401` / `User Not Authenticated` = password | keystore → step 4, password → step 5 |
+| 4 | `docker exec sn-mid sh -c 'rm -f /opt/agent/security/agent_keystore /opt/agent/security_backup/agent_keystore.*'` then `docker restart sn-mid` | deleting the stale keystore lets the MID mint one that matches the current `config.xml` | — |
+| 5 | regenerate `config.xml` (`SN_HOST` / `MID_USER` / `MID_PASS`), then `docker restart sn-mid` | required after a **password rotation** — the keystore is re-derived from the new config | re-run step 4 after it (a new config = new keystore password) |
+| 6 | `docker exec sn-mid sh -c 'grep -a "\[supervisor\]" /opt/agent/logs/console.log | tail -5'` | `[supervisor] starting MID JVM` = something will re-launch the JVM if it dies; **nothing** = the MID will stay down until a human notices | start it with `mid-supervisor.sh`, not a bare `java …` |
+
+**The verification that actually counts** (the instance, not the box):
+
+```bash
+curl -s -u "$SN_USER:$SN_PASS" \
+  "https://$SN_HOST/api/now/table/ecc_agent?sysparm_query=nameLIKEgx10&sysparm_fields=name,status,validated,last_refreshed,version"
+# expect: status=Up  validated=true  last_refreshed=<within the last minute>
+```
+
+Three behaviours worth knowing before you need them:
+
+- **Do not use the instance's "Restart MID" button** on this setup. It restarts the *management* process, which here is
+  a plain `java` invocation — the wrapper that normally relaunches it is the Intel-only piece we replaced, so the
+  restart leaves the MID down. `docker restart sn-mid` (or letting `mid-supervisor.sh` do it) is the correct action.
+- **A container "Up" is not a MID "Up".** Always confirm with step 2 (`pgrep`) or the `ecc_agent` API; the Docker status
+  only says the entrypoint has not exited.
+- **Recovery is idempotent.** The `mid_data` volume keeps the registration, so restarting does not create a second MID
+  record — check *MID Server → Servers* and you will still see one `gx10-mid`, same `sys_id`, newer `last_refreshed`.
 
 ## Summary of the Hack
 
