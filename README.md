@@ -20,13 +20,75 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 
 **The 5 things that were broken and how we fixed each:**
 
-| # | What was wrong (ELI5) | The fix |
-|---|------------------------|---------|
-| 1 | The installer is Intel-only, your chip is ARM | Skip the installer, use the Java files directly |
-| 2 | The ready-made image is an older release (Zurich), your instance wants Australia | Manually swap in the official Australia files |
-| 3 | The image ships Java 11, but modern MID needs Java 17 | Install a native ARM Java 17 |
-| 4 | The "starter" program that normally boots MID is Intel-only | Skip it — start MID directly with `java` |
-| 5 | Java 17 blocks two things MID needs | Add 2 special launch flags |
+### Step 1 — the MID user, in the instance
+> **Breadcrumb:** `All → User Administration → Users → New`
+
+- **Prerequisite:** an admin session on the instance.
+- **Fields to fill:** `User ID` = `mid.server` (one per environment) · `Active` = true ·
+  `Roles` = **`mid_server`** only · `Password needs reset` = **off** (otherwise the MID authenticates against a reset
+  password and gets `401`).
+- **Suggestion:** never reuse `admin` and never reuse a human's account — a dedicated MID user gives you independent
+  password rotation and an audit trail that names the integration, not a person.
+- **Checkpoint:** the user saves with the role present and the reset flag off.
+
+### Step 2 — the MID Server record
+> **Breadcrumb:** `All → MID Server → Servers`
+
+- **Prerequisite:** step 1 (the record is created *by* the MID on first connect).
+- **Fields to fill:** none — but note the **name**: it defaults to the box's hostname (`gx10-mid`), which is how you
+  will identify it everywhere else.
+- **Suggestion:** if you will run more than one MID on the host, decide the names now (`gx10-mid`,
+  `gx10-mid.server2`) and pass them via `MID_NAME`; renaming later means a new record.
+- **Checkpoint:** you know the name to expect in the list.
+
+### Step 3 — the box
+> **Breadcrumb:** the machine itself (Linux/ARM64)
+
+- **Prerequisite:** Ubuntu 24.04 (or similar) on `aarch64`, Docker installed, **your user in the `docker` group**
+  (`docker ps` with no `sudo`), `wget` + `unzip`, and ≥ 2 GB free for the agent plus the JDK.
+- **Fields to fill:** none.
+- **Suggestion:** verify `docker run --rm hello-world` and `unzip -v` *before* the 478 MB MID download — both failures
+  are cheap to fix now and confusing 20 minutes later.
+- **Checkpoint:** `docker ps` works unprivileged.
+
+### Step 4 — the repo
+> **Breadcrumb:** `git clone https://github.com/eltonaguiar/ServiceNowMidServer && cd ServiceNowMidServer`
+
+- **Prerequisite:** `git` and outbound HTTPS.
+- **Fields to fill:** none.
+- **Suggestion:** the setup script bind-mounts `mid-supervisor.sh` and refuses to run without it, so run it **from
+  the clone** — copying only `setup-mid-fast.sh` elsewhere is the most common silent failure.
+- **Checkpoint:** `ls setup-mid-fast.sh mid-supervisor.sh` shows both.
+
+### Step 5 — the four settings, then the script
+> **Breadcrumb:** a shell in that directory
+
+- **Prerequisite:** steps 1–4.
+- **Fields to fill:** `SN_HOST` = instance hostname (no `https://`, no trailing slash) · `MID_USER` = `mid.server` ·
+  `MID_PASS` = typed at a hidden prompt · `MID_NAME` = `gx10-mid`. Optional: `MID_XMX` (heap, `1024m` default),
+  `AGENT_VOL`/`JDK_VOL`/`CONTAINER`/`SEED_VOL` for a second MID.
+- **Suggestion:** `read -rsp "pw: " MID_PASS; export MID_PASS` — the password then never reaches shell history, `ps`,
+  or a pasted log. Export all four in the **same** shell; `sudo ./setup-mid-fast.sh` silently drops them.
+- **Checkpoint:** the script ends on the fast-relaunch path and the container is `Up`.
+
+### Step 6 — wait for validation, in the instance
+> **Breadcrumb:** `All → MID Server → Servers` → your MID
+
+- **Prerequisite:** step 5 finished (~45 s of connecting).
+- **Fields to fill:** none.
+- **Suggestion:** *Validated: Yes* is the only signal that matters — not the container status, not the log's last
+  line. If it sits at *Down*, read `agent0.log` for `401` (password/role) vs `UnrecoverableKeyException` (keystore).
+- **Checkpoint:** `status: Up`, `validated: true`, a real `version`.
+
+### Step 7 — prove the JVM and the supervisor
+> **Breadcrumb:** back on the box
+
+- **Prerequisite:** step 6.
+- **Fields to fill:** none.
+- **Suggestion:** check **both**: `pgrep -af service_now.mid.Main` (the program) and the `[supervisor] starting MID
+  JVM` line in `console.log` (the thing that will bring it back). A container can be `Up` with a dead JVM — that is
+  exactly the failure [mid-supervisor.sh](mid-supervisor.sh) exists to prevent.
+- **Checkpoint:** both checks answer, and the instance still says `Up` a minute later.
 
 *(Don't worry if that table means nothing yet — each row is explained in plain English further down.)*
 
@@ -68,7 +130,9 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 ## Order of operations — instance first, then the box
 
 Order matters because the MID validates *against the instance*. Build the box first and you will fight `401`s until
-the user exists; rotate the password afterwards and you must regenerate `config.xml` and clear the keystore.
+the user exists; rotate the password afterwards and you must regenerate `config.xml` and clear the keystore. Each step
+below gives the page (or the machine) to stand on, what to have ready first, the fields to fill, and the one
+suggestion that saves rework.
 
 | # | Where | What to do | Why here |
 |---|---|---|---|
