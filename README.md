@@ -37,6 +37,7 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 ## Table of Contents
 
 - [📌 TL;DR — Long Story Short](#-tldr--long-story-short)
+- [Order of operations — instance first, then the box](#order-of-operations--instance-first-then-the-box)
 - [Quick Start — Run These Commands](#quick-start--run-these-commands)
 - [What You Need To Edit (The 4 Settings)](#what-you-need-to-edit-the-4-settings)
 - [Why This Is Hard](#why-this-is-hard)
@@ -60,6 +61,56 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
   `config.xml` escaping rules, why REST cannot set MID passwords, credential verification via
   `GetMIDInfo.do?SOAP`, validation, and two-MID routing
 - [Contributing & License](#contributing--license)
+
+---
+
+## Order of operations — instance first, then the box
+
+Order matters because the MID validates *against the instance*. Build the box first and you will fight `401`s until
+the user exists; rotate the password afterwards and you must regenerate `config.xml` and clear the keystore.
+
+| # | Where | What to do | Why here |
+|---|---|---|---|
+| 1 | **Instance → All → User Administration → Users → New** | MID user (e.g. `mid.server`), **Active**, role **`mid_server`**, *Password needs reset* **off** | the MID authenticates as this user on first contact |
+| 2 | **Instance → All → MID Server → Servers** | nothing to create — the record appears on first connect, named after the host | tells you the name the instance will show |
+| 3 | **Box (Linux/ARM64)** | Docker available, your user in the `docker` group, `wget` + `unzip`, ≥ 2 GB free | the script's preflight |
+| 4 | **Box → repo** | `git clone … && cd ServiceNowMidServer` | `setup-mid-fast.sh` bind-mounts `mid-supervisor.sh` and refuses to run without it |
+| 5 | **Box → shell** | `export SN_HOST=… MID_USER=…` then `read -rsp "pw: " MID_PASS` and `./setup-mid-fast.sh` | the 4 required settings; everything else has a default |
+| 6 | **Instance → MID Server → Servers** | wait for *Validated: Yes* (~45 s) | the only authoritative health signal |
+| 7 | **Box** | confirm the JVM **and** the supervisor are alive | the container can be "Up" with a dead JVM |
+
+**The 4 required settings, and the optional ones**
+
+| Variable | Default | Why you'd change it |
+|---|---|---|
+| `SN_HOST` | — (required) | instance hostname: no `https://`, no trailing slash |
+| `MID_USER` | — (required) | one MID user per environment — never `admin` |
+| `MID_PASS` | — (required) | read with `read -rsp`, so it never reaches history or `ps` |
+| `MID_NAME` | `<hostname>-mid` | the name shown in the instance |
+| `MID_XMX` | `1024m` | heap size; raise it for heavy Discovery or imports |
+| `AGENT_VOL` / `JDK_VOL` / `CONTAINER` / `SEED_VOL` | `mid_data` / `mid_jdk17` / `sn-mid` / `mid_data` | run a **second** MID on the same host without touching the first |
+| `MID_BUILD` / `MID_DATE` | the Australia build | pin to whatever *MID Server → Download* offers on your instance |
+
+**Things to watch out for** — the five we actually hit: `UnsupportedClassVersionError` (Java 11 vs 17), the missing
+`wrapper-linux-arm-64` (the wrapper is x86-only), `InaccessibleObjectException` (needs the 14 `--add-opens` flags),
+`UnrecoverableKeyException` after regenerating `config.xml` (delete the stale keystore first), and a **wrapper-less
+MID dying on a UI "Restart MID"** — which is exactly what `mid-supervisor.sh` exists to fix, because otherwise Docker
+stays `Up` while the instance says `Down`.
+
+**Validation**
+
+```bash
+# instance - the only source of truth
+curl -s -u "$SN_USER:$SN_PASS" "https://$SN_HOST/api/now/table/ecc_agent?sysparm_query=nameLIKEgx10&sysparm_fields=name,status,validated,last_refreshed,version"
+
+# box - the JVM, not just the container
+docker exec sn-mid pgrep -af service_now.mid.Main
+docker exec sn-mid sh -c 'grep -aE "connected to instance host|Operational State" /opt/agent/logs/agent0.log.0 | tail -3'
+docker exec sn-mid sh -c 'grep -a "\[supervisor\]" /opt/agent/logs/console.log | tail -3'
+```
+
+Expect `status: Up`, `validated: true`, `Operational State=UP`, and a `[supervisor] starting MID JVM` line proving the
+relauncher — not just the wrapper-less JVM — is what is running.
 
 ---
 
