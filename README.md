@@ -96,6 +96,23 @@ Tested end-to-end on an **NVIDIA DGX Spark / GX10** (GB10 Grace Blackwell, `aarc
 
 ---
 
+## Before you start — prerequisites checklist
+
+Tick these off before step 1. Everything here is a hard prerequisite unless marked optional — the common
+failures are a missing item from this list, not a step done wrong.
+
+- [ ] Instance **admin** (you will create the MID user and grant its role)
+- [ ] An **ARM64** host — NVIDIA GX10 / Grace Blackwell, Raspberry Pi, or Apple Silicon — on Ubuntu 24.04 or similar
+- [ ] Docker installed, your user in the **`docker` group** (`docker ps` with no `sudo`), `wget` + `unzip`, **≥ 2 GB**
+      free for the agent plus the JDK
+- [ ] Outbound **HTTPS 443** to `<instance>.service-now.com` *and* to `install.service-now.com` (the ~478 MB payload
+      comes from there)
+- [ ] Your instance's MID release (e.g. *Australia patch3*), so the agent build matches what the instance expects
+- [ ] The `mid.server` password to hand — typed at a hidden prompt, never pasted into a command line
+- [ ] *(optional)* a naming plan if you intend a second MID on the same host: `MID_NAME`, `AGENT_VOL`, `CONTAINER`
+
+---
+
 ## Table of Contents
 
 - [📌 TL;DR — Long Story Short](#-tldr--long-story-short)
